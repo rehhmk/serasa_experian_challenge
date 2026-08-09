@@ -185,10 +185,10 @@ de cada sugestão: `USO_DE_IA.md`.
 |---|---|---|---|
 | 1 | Cadastros | LOG-001 | ✅ |
 | 2 | Recepção HTTP, balanças concorrentes | LOG-002, 004, 005 | ✅ |
-| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016 | ✅ |
-| 4 | Relatórios/Estatísticas | LOG-015, seção 6 | ✅ 4 MUST definidos (SHOULD/COULD documentados como roadmap) |
+| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016 | ✅ implementado e testado (PRs #16, #17, #19) |
+| 4 | Relatórios/Estatísticas | LOG-015, seção 6 | ✅ 4 MUST implementados e testados (PR #21); SHOULD/COULD documentados como roadmap |
 | 5a | Arquitetura/desenho | LOG-002, 004, 011 + este blueprint | ✅ |
-| 5b | Autenticação das balanças | LOG-014 | ✅ |
-| 5c | Retentativa e idempotência | LOG-008, 016 | ✅ |
+| 5b | Autenticação das balanças | LOG-014 | ✅ implementado e testado (PR #18) |
+| 5c | Retentativa e idempotência | LOG-008, 016 | ✅ implementado e testado (PRs #17, #19) |
 | 5d | Sugestão de expansão | seção 7 | ✅ |
-| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008 | 🔶 Prompt ok · código gerado real ainda pendente (seção 7 do USO_DE_IA está com exemplo, não registro real) |
+| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008 | 🔶 Prompt ok · código já implementado, registro formal na seção 7 do USO_DE_IA ainda pendente |
