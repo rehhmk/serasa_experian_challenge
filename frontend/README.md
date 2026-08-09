@@ -36,14 +36,30 @@ um consumidor da API já existente, autenticando cada balança com a
 **No ar:** https://grainweighing-frontend.onrender.com — Render Static
 Site, build direto deste diretório (`buildCommand: cd frontend && npm ci &&
 npm run build`, `staticPublishPath: frontend/dist`, ver `../render.yaml`).
-
-Em produção não existe dev server do Vite pra fazer proxy — quem cumpre
-esse papel é `public/_redirects` (formato Render/Netlify, copiado pro
-`dist/` no build): reescreve `/api/*` pro backend real
-(`https://grainweighing.onrender.com`) antes do site estático ser servido,
-com status `200` (rewrite transparente, não redirect visível no browser).
 Site estático servido via CDN — sem cold start, ao contrário do backend
 (free tier, dorme após ~15min de inatividade).
+
+Em produção não existe dev server do Vite pra fazer proxy. Quem cumpre esse
+papel é uma regra de rewrite (`/api/*` → `https://grainweighing.onrender.com/api/*`,
+status `200`, transparente) configurada diretamente no serviço via API REST
+do Render (`POST /services/{id}/routes`) — a `render` CLI não tem
+subcomando pra isso, e o `render.yaml` só aplica a chave `routes` em
+serviços sob Blueprint ativo, o que não é o caso aqui (o serviço foi criado
+direto via CLI, mesmo padrão do backend). A entrada `routes` no
+`render.yaml` existe só como documentação/IaC de referência.
+
+**Um arquivo `public/_redirects` (formato Netlify) foi tentado primeiro e
+não funciona no Render** — descoberto testando manualmente contra o deploy
+real (`/api/branches` via proxy voltava 404 mesmo com o arquivo publicado
+em `/_redirects`), confirmado depois na documentação oficial do Render.
+Removido; registrado aqui só pra quem cair no mesmo caminho não repetir a
+tentativa.
+
+Validado manualmente ponta a ponta contra a instância real, através do
+proxy (não direto no backend): `GET`/`POST` com corpo JSON, header
+`X-Scale-Key` passando íntegro (balança + leitura criadas de verdade,
+confirmadas no backend), e autenticação genuína (`X-Scale-Key` errada →
+`401`, não um bypass do proxy).
 
 ## Arquitetura
 
