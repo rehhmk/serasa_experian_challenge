@@ -44,6 +44,8 @@ function describeTruckState(snapshot: SnapshotFrom<typeof truckMachine>): { labe
   if (snapshot.matches('travelling') || snapshot.matches('openingTransaction')) {
     return { label: 'A caminho', tone: 'neutral' }
   }
+  if (snapshot.matches('emptying')) return { label: 'Esvaziando (2ª passagem)', tone: 'neutral' }
+  if (snapshot.matches('openingSecondTransaction')) return { label: 'Reabrindo transação', tone: 'neutral' }
   if (snapshot.matches('leaving')) return { label: 'Saindo', tone: 'neutral' }
   return { label: 'Na fila', tone: 'neutral' }
 }
