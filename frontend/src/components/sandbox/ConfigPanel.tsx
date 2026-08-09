@@ -55,6 +55,9 @@ export function ConfigPanel() {
             onChange={handleNumTrucksChange}
           />
         </label>
+        <button type="button" disabled={!isReady} onClick={() => actorRef.send({ type: 'RUN_CONCURRENCY_DEMO' })}>
+          Testar concorrência (2 balanças)
+        </button>
       </div>
       <ul className="truck-profile-list">
         {trucks.map((truck) => (
