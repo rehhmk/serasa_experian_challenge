@@ -145,3 +145,14 @@ conectar o repositório).
 - O Postgres free expira em 30 dias (9 de setembro de 2026) — suficiente
   para a janela da entrevista, não para manter o ambiente de pé
   indefinidamente.
+
+## Sandbox de desenvolvedor (adicional, fora do core avaliado)
+
+[`frontend/`](frontend/) é uma página React + TypeScript + XState **fora do
+escopo do desafio em si** — um sandbox visual pra estressar a API real:
+filas de balanças, caminhões simulados fluindo automaticamente e perfis de
+leitura que exercitam os edge cases documentados do algoritmo de
+estabilização (mediana+MAD, guarda de slope, idempotência, isolamento por
+balança). Zero alteração no código Java — só mais um consumidor da API já
+existente. Detalhes, como rodar e limitações conhecidas:
+[`frontend/README.md`](frontend/README.md).
