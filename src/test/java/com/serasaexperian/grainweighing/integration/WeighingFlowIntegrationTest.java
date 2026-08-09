@@ -42,26 +42,41 @@ class WeighingFlowIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    /**
+     * Confere o status HTTP imediatamente após cada chamada de setup, com o corpo
+     * da resposta na mensagem de falha. Sem isso, uma falha numa chamada cedo
+     * (ex: 500 transitório de conexão com o banco) deixa os IDs seguintes nulos e
+     * só se manifesta muitos passos depois, como um erro confuso de deserialização
+     * Jackson sem relação óbvia com a causa raiz real.
+     */
+    private <T> T post(String path, Object body, Class<T> responseType) {
+        ResponseEntity<T> response = restTemplate.postForEntity(path, body, responseType);
+        assertThat(response.getStatusCode().is2xxSuccessful())
+                .as("POST %s returned %s, body=%s", path, response.getStatusCode(), response.getBody())
+                .isTrue();
+        return response.getBody();
+    }
+
     @Test
     void openTransactionThenStableReadingsProducesExactlyOneCompletedWeighing() throws InterruptedException {
-        BranchResponse branch = restTemplate.postForEntity("/api/branches",
-                new BranchRequest("Goiânia", "Goiânia", "GO"), BranchResponse.class).getBody();
+        BranchResponse branch = post("/api/branches",
+                new BranchRequest("Goiânia", "Goiânia", "GO"), BranchResponse.class);
 
-        TruckResponse truck = restTemplate.postForEntity("/api/trucks",
-                new TruckRequest("FLW9000", new BigDecimal("9000")), TruckResponse.class).getBody();
+        TruckResponse truck = post("/api/trucks",
+                new TruckRequest("FLW9000", new BigDecimal("9000")), TruckResponse.class);
 
-        GrainTypeResponse grainType = restTemplate.postForEntity("/api/grain-types",
+        GrainTypeResponse grainType = post("/api/grain-types",
                 new GrainTypeRequest("Soja-" + UUID.randomUUID(), new BigDecimal("1800.00"),
                         new BigDecimal("100000.00")),
-                GrainTypeResponse.class).getBody();
+                GrainTypeResponse.class);
 
         String scaleId = "scale-flow-" + UUID.randomUUID();
-        ScaleCreatedResponse scale = restTemplate.postForEntity("/api/scales",
-                new ScaleRequest(scaleId, branch.id()), ScaleCreatedResponse.class).getBody();
+        ScaleCreatedResponse scale = post("/api/scales",
+                new ScaleRequest(scaleId, branch.id()), ScaleCreatedResponse.class);
 
-        TransportTransactionResponse transaction = restTemplate.postForEntity("/api/transport-transactions",
+        TransportTransactionResponse transaction = post("/api/transport-transactions",
                 new OpenTransportTransactionRequest(truck.id(), grainType.id(), branch.id()),
-                TransportTransactionResponse.class).getBody();
+                TransportTransactionResponse.class);
         assertThat(transaction.status()).isEqualTo(TransportTransactionStatus.OPEN);
 
         HttpHeaders headers = new HttpHeaders();
