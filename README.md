@@ -4,9 +4,10 @@ Solução para o desafio técnico de backend: ingestão, estabilização e
 armazenamento de leituras de peso de balanças rodoviárias (ESP32,
 fire-and-forget) para uma empresa de transporte de grãos.
 
-Este repositório está, neste momento, na fase de **design documentado antes
-da implementação** — os três arquivos abaixo registram a arquitetura, as
-decisões técnicas e o uso de IA que sustentam o código a ser escrito.
+O scaffold completo (Maven, migrations, cadastros, pacote de ingestão, etc.)
+já está em `main`, dividido em PRs pequenas seguindo a convenção descrita em
+`CLAUDE.md` §30. Os três arquivos abaixo registram a arquitetura, as
+decisões técnicas e o uso de IA que sustentam esse código.
 
 ## Como ler estes documentos
 
@@ -76,3 +77,44 @@ COULD documentados como roadmap, não bloqueiam a entrega.
 
 Java + Spring Boot, PostgreSQL. Detalhes de modelagem e endpoints em
 `BLUEPRINT.md`, seções 2 e 3.
+
+## Rodando o projeto
+
+Dois jeitos de rodar, dependendo do que você tem instalado.
+
+### Loop rápido de desenvolvimento (JDK 17 + Maven no host)
+
+Só o Postgres roda em container; a aplicação roda direto no host — melhor
+para iterar rápido (hot reload, debugger, etc.).
+
+```bash
+docker-compose up -d postgres
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+```
+
+### Stack completo containerizado (só precisa de Docker)
+
+Aplicação e banco rodam ambos em container — útil para validar o build de
+produção ou rodar sem JDK/Maven instalados localmente.
+
+```bash
+docker-compose up --build
+```
+
+Em ambos os casos, a API sobe em `http://localhost:8080` com dados de seed
+(`V9__seed_dev_data.sql`) já carregados — inclui uma balança de teste
+(`scale-01`) com a chave `dev-scale-01-key` para simular o ESP32:
+
+```bash
+curl -X POST http://localhost:8080/api/readings \
+  -H "Content-Type: application/json" \
+  -H "X-Scale-Key: dev-scale-01-key" \
+  -d '{"id":"scale-01","plate":"ABC1D23","weight":32010}'
+```
+
+**Importante:** cadastros (`/api/branches`, `/api/trucks`, `/api/grain-types`,
+`/api/scales`, `/api/transport-transactions`) e o cálculo de margem já
+funcionam de verdade. `/api/readings` e `/api/reports/*` retornam `500` —
+são TODOs documentados (`StabilizationEngine`, `ScaleAuthFilter`,
+`CompleteWeighingUseCase`, as 4 query services de relatório), não bugs do
+deploy. Ver checklist de conformidade (seção 9) no `BLUEPRINT.md`.

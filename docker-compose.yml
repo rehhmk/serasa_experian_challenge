@@ -15,5 +15,19 @@ services:
       timeout: 3s
       retries: 5
 
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/grainweighing
+      SPRING_DATASOURCE_USERNAME: grainweighing
+      SPRING_DATASOURCE_PASSWORD: grainweighing
+      SPRING_FLYWAY_LOCATIONS: classpath:db/migration,classpath:db/dev-migration
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
 volumes:
   grainweighing_pgdata:
