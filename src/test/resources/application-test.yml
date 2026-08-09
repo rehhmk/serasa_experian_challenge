@@ -1,0 +1,20 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+
+grainweighing:
+  stabilization:
+    min-samples: 5
+    min-valid-ratio: 0.8
+    max-std-dev-kg: 30
+    max-range-kg: 100
+    max-slope-kg-per-sec: 10
+    stability-duration-ms: 200
+    scale-resolution-kg: 20
+    empty-threshold-kg: 200
+    empty-duration-ms: 200
+  raw-reading-buffer:
+    flush-batch-size: 10
