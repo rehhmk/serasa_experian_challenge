@@ -46,7 +46,7 @@ public class Weighing {
     private int samplesUsed;
 
     @Column(name = "standard_deviation", nullable = false)
-    private double standardDeviation;
+    private BigDecimal standardDeviation;
 
     protected Weighing() {
     }
@@ -54,7 +54,7 @@ public class Weighing {
     public Weighing(UUID id, UUID transportTransactionId, String scaleId, String plate,
                      BigDecimal grossWeightKg, BigDecimal tareWeightKg, BigDecimal netWeightKg,
                      UUID grainTypeId, BigDecimal cost, Instant recordedAt,
-                     int samplesUsed, double standardDeviation) {
+                     int samplesUsed, BigDecimal standardDeviation) {
         this.id = id;
         this.transportTransactionId = transportTransactionId;
         this.scaleId = scaleId;
@@ -113,7 +113,7 @@ public class Weighing {
         return samplesUsed;
     }
 
-    public double getStandardDeviation() {
+    public BigDecimal getStandardDeviation() {
         return standardDeviation;
     }
 }

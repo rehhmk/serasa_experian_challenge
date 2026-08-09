@@ -1,5 +1,6 @@
 package com.serasaexperian.grainweighing.ingestion;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -27,7 +28,7 @@ public class RawReading {
     private String plate;
 
     @Column(name = "weight_kg", nullable = false)
-    private double weightKg;
+    private BigDecimal weightKg;
 
     @Column(name = "recorded_at", nullable = false)
     private Instant recordedAt;
@@ -35,7 +36,7 @@ public class RawReading {
     protected RawReading() {
     }
 
-    public RawReading(String scaleId, String plate, double weightKg, Instant recordedAt) {
+    public RawReading(String scaleId, String plate, BigDecimal weightKg, Instant recordedAt) {
         this.scaleId = scaleId;
         this.plate = plate;
         this.weightKg = weightKg;
@@ -54,7 +55,7 @@ public class RawReading {
         return plate;
     }
 
-    public double getWeightKg() {
+    public BigDecimal getWeightKg() {
         return weightKg;
     }
 
