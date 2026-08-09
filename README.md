@@ -64,16 +64,22 @@ O `BLUEPRINT.md` é a porta de entrada e aponta para `LOG-XXX` (decisão) e
 
 ## Status atual
 
-Ver checklist completo na seção 9 do `BLUEPRINT.md`. Em aberto no momento:
+Ver checklist completo na seção 9 do `BLUEPRINT.md`. Lógica core implementada
+e testada de ponta a ponta (PRs #16–#21): `StabilizationEngine`, máquina de
+estados de `ScaleSession`, `ScaleAuthFilter`, `CompleteWeighingUseCase` e os
+4 relatórios administrativos MUST (Livro de Pesagens, Volume/Custo por Grão,
+Estoque/Oportunidade de Margem, Desempenho por Filial). Fluxo completo
+(leitura → estabilização → pesagem → relatório) validado via teste de
+integração com Postgres real (Testcontainers).
+
+Em aberto no momento:
 
 - 🔶 Registro de código gerado por IA (`USO_DE_IA.md`, seção 7) — hoje é um
   exemplo de template, ainda não os registros reais dos arquivos
   efetivamente implementados.
-
-Fechado nesta rodada: relatórios administrativos (`LOG-015`) — 4 relatórios
-MUST definidos e prontos para implementar (Livro de Pesagens, Volume/Custo
-por Grão, Estoque/Oportunidade de Margem, Desempenho por Filial); SHOULD/
-COULD documentados como roadmap, não bloqueiam a entrega.
+- 🔶 Ambiente de deploy externo — decisão adiada deliberadamente até a lógica
+  core estar pronta (ver seção "Rodando o projeto" abaixo); containerização
+  já está pronta para qualquer alvo.
 
 ## Stack
 
@@ -114,9 +120,8 @@ curl -X POST http://localhost:8080/api/readings \
   -d '{"id":"scale-01","plate":"ABC1D23","weight":32010}'
 ```
 
-**Importante:** cadastros (`/api/branches`, `/api/trucks`, `/api/grain-types`,
-`/api/scales`, `/api/transport-transactions`) e o cálculo de margem já
-funcionam de verdade. `/api/readings` e `/api/reports/*` retornam `500` —
-são TODOs documentados (`StabilizationEngine`, `ScaleAuthFilter`,
-`CompleteWeighingUseCase`, as 4 query services de relatório), não bugs do
-deploy. Ver checklist de conformidade (seção 9) no `BLUEPRINT.md`.
+Todo o fluxo funciona de verdade: cadastros, `/api/readings` (a balança
+precisa continuar mandando leituras — em produção a cada ~100ms — até
+`stabilityDurationMs` ser atingido, cerca de 3s por padrão, para a pesagem
+ser finalizada) e `/api/reports/*`. Ver checklist de conformidade (seção 9)
+no `BLUEPRINT.md`.
