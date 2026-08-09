@@ -38,7 +38,7 @@ public class ScaleAuthFilter extends OncePerRequestFilter {
         throw new UnsupportedOperationException("TODO LOG-014: see doFilterInternal comment");
     }
 
-    static String sha256Hex(String value) {
+    public static String sha256Hex(String value) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
