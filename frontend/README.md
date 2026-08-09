@@ -31,6 +31,20 @@ Zero alteração no código Java em toda esta implementação — a UI é só ma
 um consumidor da API já existente, autenticando cada balança com a
 `X-Scale-Key` real obtida na hora da criação (`POST /api/scales`).
 
+## Deploy
+
+**No ar:** https://grainweighing-frontend.onrender.com — Render Static
+Site, build direto deste diretório (`buildCommand: cd frontend && npm ci &&
+npm run build`, `staticPublishPath: frontend/dist`, ver `../render.yaml`).
+
+Em produção não existe dev server do Vite pra fazer proxy — quem cumpre
+esse papel é `public/_redirects` (formato Render/Netlify, copiado pro
+`dist/` no build): reescreve `/api/*` pro backend real
+(`https://grainweighing.onrender.com`) antes do site estático ser servido,
+com status `200` (rewrite transparente, não redirect visível no browser).
+Site estático servido via CDN — sem cold start, ao contrário do backend
+(free tier, dorme após ~15min de inatividade).
+
 ## Arquitetura
 
 ```text

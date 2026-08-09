@@ -1,0 +1,5 @@
+# Render (formato compatível com Netlify) reescreve /api/* pro backend real
+# antes de servir o site estático — mesmo papel do proxy do Vite dev server
+# (vite.config.ts) em desenvolvimento, evita CORS sem tocar no Spring Boot.
+# Status 200 = rewrite (proxy transparente), não redirect visível no browser.
+/api/*  https://grainweighing.onrender.com/api/*  200
