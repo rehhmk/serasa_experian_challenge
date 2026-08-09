@@ -16,6 +16,8 @@ import com.serasaexperian.grainweighing.registry.truck.TruckRequest;
 import com.serasaexperian.grainweighing.registry.truck.TruckResponse;
 import com.serasaexperian.grainweighing.reports.ReportEnvelope;
 import com.serasaexperian.grainweighing.reports.weighingbook.WeighingBookItem;
+import com.serasaexperian.grainweighing.stock.GrainStock;
+import com.serasaexperian.grainweighing.stock.GrainStockRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -41,6 +43,8 @@ class WeighingFlowIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
+    @Autowired
+    private GrainStockRepository grainStockRepository;
 
     /**
      * Confere o status HTTP imediatamente após cada chamada de setup, com o corpo
@@ -69,6 +73,11 @@ class WeighingFlowIntegrationTest extends AbstractIntegrationTest {
                 new GrainTypeRequest("Soja-" + UUID.randomUUID(), new BigDecimal("1800.00"),
                         new BigDecimal("100000.00")),
                 GrainTypeResponse.class);
+
+        // Sem endpoint REST para GrainStock (provisionado fora de banda, ex: seed) --
+        // GrainStockService.increaseAvailableQuantity exige que a linha ja exista.
+        BigDecimal initialStockKg = new BigDecimal("50000.00");
+        grainStockRepository.save(new GrainStock(UUID.randomUUID(), branch.id(), grainType.id(), initialStockKg));
 
         String scaleId = "scale-flow-" + UUID.randomUUID();
         ScaleCreatedResponse scale = post("/api/scales",
@@ -111,5 +120,10 @@ class WeighingFlowIntegrationTest extends AbstractIntegrationTest {
         assertThat(weighing.tareWeightKg()).isEqualByComparingTo("9000");
         assertThat(weighing.netWeightKg()).isEqualByComparingTo("23000.00"); // 32000 - 9000
         assertThat(weighing.cost()).isEqualByComparingTo("41400.00"); // 23 ton * 1800/ton
+
+        GrainStock stock = grainStockRepository.findByBranchIdAndGrainTypeId(branch.id(), grainType.id())
+                .orElseThrow();
+        assertThat(stock.getAvailableQuantityKg())
+                .isEqualByComparingTo(initialStockKg.add(weighing.netWeightKg())); // 50000 + 23000
     }
 }
