@@ -1,26 +1,26 @@
 interface TelemetryReadoutProps {
-  weightKg: number
-  standardDeviation: number
   samplesUsed: number
+  standardDeviationG: number
+  slopeKgPerSec: number
 }
 
-// Puramente apresentacional — recebe números já calculados (pelo predictor,
-// via TruckToken) e só formata. Reutilizável fora do contexto de raia/caminhão
-// se algum dia precisar (ex: página de relatórios).
-export function TelemetryReadout({ weightKg, standardDeviation, samplesUsed }: TelemetryReadoutProps) {
+// Puramente apresentacional — diagnóstico do algoritmo de estabilização
+// (amostras/desvio/slope), não peso do caminhão (isso é o TruckToken quem
+// mostra, ao lado da placa). Recebe números já calculados, só formata.
+export function TelemetryReadout({ samplesUsed, standardDeviationG, slopeKgPerSec }: TelemetryReadoutProps) {
   return (
     <dl className="telemetry-readout">
       <div>
-        <dt>Peso</dt>
-        <dd>{weightKg.toFixed(1)} kg</dd>
-      </div>
-      <div>
-        <dt>Amostras</dt>
+        <dt>amostras</dt>
         <dd>{samplesUsed}</dd>
       </div>
       <div>
         <dt>σ</dt>
-        <dd>{standardDeviation.toFixed(2)} kg</dd>
+        <dd>{standardDeviationG.toFixed(0)} g</dd>
+      </div>
+      <div>
+        <dt>slope</dt>
+        <dd>{slopeKgPerSec.toFixed(2)}</dd>
       </div>
     </dl>
   )

@@ -1,4 +1,4 @@
-import type { ChangeEvent } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import type { TruckProfileName } from '../../simulation/readingProfiles/types'
 import { YardActorContext } from './yardActorContext'
 
@@ -14,14 +14,16 @@ function parsePositiveInt(value: string): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-// Responsabilidade única: configuração da simulação — nº de raias/caminhões
-// e o perfil de cada caminhão. Não sabe nada de layout de raias ou fila.
+// Responsabilidade única: configuração da simulação — nº de raias/caminhões,
+// os controles de "+/− balança" e "enviar aleatórios à fila", e o perfil de
+// cada caminhão. Não sabe nada de layout de raias ou fila.
 export function ConfigPanel() {
   const isReady = YardActorContext.useSelector((s) => s.matches('ready'))
   const numLanes = YardActorContext.useSelector((s) => s.context.numLanes)
   const numTrucks = YardActorContext.useSelector((s) => s.context.numTrucks)
   const trucks = YardActorContext.useSelector((s) => s.context.trucks)
   const actorRef = YardActorContext.useActorRef()
+  const [randomQty, setRandomQty] = useState(3)
 
   function handleNumLanesChange(event: ChangeEvent<HTMLInputElement>) {
     const value = parsePositiveInt(event.target.value)
@@ -34,6 +36,13 @@ export function ConfigPanel() {
     const value = parsePositiveInt(event.target.value)
     if (value !== null) {
       actorRef.send({ type: 'SET_CONFIG', numTrucks: value })
+    }
+  }
+
+  function handleRandomQtyChange(event: ChangeEvent<HTMLInputElement>) {
+    const value = parsePositiveInt(event.target.value)
+    if (value !== null) {
+      setRandomQty(value)
     }
   }
 
@@ -59,6 +68,38 @@ export function ConfigPanel() {
           Testar concorrência (2 balanças)
         </button>
       </div>
+
+      <div className="config-panel-highway-controls">
+        <button
+          type="button"
+          disabled={!isReady}
+          onClick={() => actorRef.send({ type: 'SET_CONFIG', numLanes: numLanes + 1 })}
+        >
+          + balança
+        </button>
+        <button
+          type="button"
+          disabled={!isReady || numLanes <= 1}
+          onClick={() => actorRef.send({ type: 'SET_CONFIG', numLanes: Math.max(1, numLanes - 1) })}
+        >
+          − balança
+        </button>
+        <span className="config-panel-lane-count">
+          {numLanes} balança{numLanes === 1 ? '' : 's'} na rodovia
+        </span>
+        <label className="config-panel-qty">
+          Qtd.
+          <input type="number" min={1} max={20} value={randomQty} disabled={!isReady} onChange={handleRandomQtyChange} />
+        </label>
+        <button
+          type="button"
+          disabled={!isReady}
+          onClick={() => actorRef.send({ type: 'ENQUEUE_RANDOM_TRUCKS', count: randomQty })}
+        >
+          Enviar aleatórios à fila
+        </button>
+      </div>
+
       <ul className="truck-profile-list">
         {trucks.map((truck) => (
           <li key={truck.truckId}>

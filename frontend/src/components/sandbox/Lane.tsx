@@ -11,11 +11,15 @@ interface LaneProps {
 export function Lane({ scaleId }: LaneProps) {
   const occupantId = YardActorContext.useSelector((s) => s.context.lanes[scaleId] ?? null)
   const truckRefs = YardActorContext.useSelector((s) => s.context.truckRefs)
+  const branchName = YardActorContext.useSelector((s) => s.context.branchName)
   const truckRef = occupantId ? truckRefs[occupantId] : undefined
 
   return (
     <div className="lane" data-scale-id={scaleId}>
-      <header className="lane-header">{scaleId}</header>
+      <header className="lane-header">
+        <span className="lane-header-scale">{scaleId}</span>
+        {branchName && <span className="lane-header-branch">{branchName}</span>}
+      </header>
       {truckRef ? <TruckToken actorRef={truckRef} /> : <p className="lane-empty">Balança livre</p>}
     </div>
   )

@@ -55,6 +55,33 @@
   width: 72px;
 }
 
+.config-panel-highway-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.config-panel-lane-count {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.config-panel-qty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.config-panel-qty input {
+  width: 56px;
+}
+
 .truck-profile-list {
   list-style: none;
   display: flex;
@@ -85,14 +112,27 @@
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   padding: 12px;
-  min-height: 140px;
+  min-height: 160px;
 }
 
 .lane-header {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: #6b7280;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   margin-bottom: 8px;
+}
+
+.lane-header-scale {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.lane-header-branch {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #7c6df2;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .lane-empty {
@@ -103,13 +143,53 @@
 .truck-token-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   flex-wrap: wrap;
+}
+
+/* A "estrada": linha tracejada horizontal com o caminhão posicionado ao
+   longo dela (roadPercent, ver truckDisplay.ts). Puramente decorativo — a
+   posição não corresponde a nenhuma distância real, só à fase da passagem. */
+.lane-road {
+  position: relative;
+  height: 32px;
+  margin: 4px 0 8px;
+}
+
+.lane-road-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 2px dashed #d1d5db;
+  transform: translateY(-50%);
+}
+
+.lane-road-truck {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 700ms ease-in-out;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.truck-token-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
 .truck-plate {
   font-weight: 600;
+}
+
+.truck-weight {
+  font-weight: 600;
+  color: #4338ca;
 }
 
 .truck-profile {

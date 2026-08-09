@@ -1,51 +1,48 @@
 import { useSelector } from '@xstate/react'
-import type { ActorRefFrom, SnapshotFrom } from 'xstate'
+import type { ActorRefFrom } from 'xstate'
 import type { truckMachine } from '../../machines/truckMachine'
-import { StabilityBadge, type StabilityBadgeTone } from './StabilityBadge'
+import { StabilityBadge } from './StabilityBadge'
 import { TelemetryReadout } from './TelemetryReadout'
+import { describeTruckDisplay } from './truckDisplay'
 
 interface TruckTokenProps {
   actorRef: ActorRefFrom<typeof truckMachine>
 }
 
-// Responsabilidade única: dado o ator de UM caminhão, mostrar placa/perfil/
-// badge de estado + telemetria. Não sabe nada de raia/pátio — Lane é quem
-// decide qual ator passar aqui.
+// Responsabilidade única: dado o ator de UM caminhão, renderiza a "estrada"
+// animada (posição derivada do estado real da máquina, via
+// describeTruckDisplay) + placa/peso/telemetria. Não sabe nada de raia/pátio
+// — Lane é quem decide qual ator passar aqui.
 export function TruckToken({ actorRef }: TruckTokenProps) {
   const snapshot = useSelector(actorRef, (s) => s)
   const { plate, profile, predictor, confirmedWeighing } = snapshot.context
-  const { label, tone } = describeTruckState(snapshot)
+  const { label, tone, roadPercent } = describeTruckDisplay(snapshot)
+  const weightTons = (confirmedWeighing?.netWeightKg ?? predictor.weightKg) / 1000
 
   return (
     <div className="truck-token">
       <div className="truck-token-header">
-        <span className="truck-plate">{plate}</span>
         <span className="truck-profile">{profile}</span>
         <StabilityBadge label={label} tone={tone} />
       </div>
+
+      <div className="lane-road" aria-hidden="true">
+        <div className="lane-road-track" />
+        <span className="lane-road-truck" style={{ left: `${roadPercent}%` }}>
+          🚚
+        </span>
+      </div>
+
+      <div className="truck-token-footer">
+        <span className="truck-plate">{plate}</span>
+        <span className="truck-weight">{weightTons.toFixed(2)} t</span>
+      </div>
+
       <TelemetryReadout
-        weightKg={confirmedWeighing?.netWeightKg ?? predictor.weightKg}
-        standardDeviation={predictor.standardDeviation}
         samplesUsed={predictor.samplesUsed}
+        standardDeviationG={predictor.standardDeviation * 1000}
+        slopeKgPerSec={predictor.slope}
       />
     </div>
   )
-}
-
-function describeTruckState(snapshot: SnapshotFrom<typeof truckMachine>): { label: string; tone: StabilityBadgeTone } {
-  if (snapshot.matches({ onScale: 'collecting' })) return { label: 'Coletando', tone: 'neutral' }
-  if (snapshot.matches({ onScale: 'stabilizing' })) return { label: 'Estabilizando', tone: 'progress' }
-  if (snapshot.matches('confirming') || snapshot.matches('confirmRetryWait')) {
-    return { label: 'Confirmando', tone: 'progress' }
-  }
-  if (snapshot.matches('recorded')) return { label: 'Estável', tone: 'success' }
-  if (snapshot.matches('unconfirmed')) return { label: 'Não confirmado', tone: 'warning' }
-  if (snapshot.matches('transactionError')) return { label: 'Erro', tone: 'danger' }
-  if (snapshot.matches('travelling') || snapshot.matches('openingTransaction')) {
-    return { label: 'A caminho', tone: 'neutral' }
-  }
-  if (snapshot.matches('emptying')) return { label: 'Esvaziando (2ª passagem)', tone: 'neutral' }
-  if (snapshot.matches('openingSecondTransaction')) return { label: 'Reabrindo transação', tone: 'neutral' }
-  if (snapshot.matches('leaving')) return { label: 'Saindo', tone: 'neutral' }
-  return { label: 'Na fila', tone: 'neutral' }
 }
