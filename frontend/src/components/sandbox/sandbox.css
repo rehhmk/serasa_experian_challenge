@@ -1,0 +1,200 @@
+.sandbox-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+.sandbox-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.sandbox-banner--info {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.sandbox-banner--error {
+  background: #fef2f2;
+  color: #991b1b;
+  justify-content: space-between;
+}
+
+.control-bar,
+.config-panel-fields {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.control-bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.config-panel {
+  margin-bottom: 24px;
+}
+
+.config-panel-fields label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.85rem;
+  gap: 4px;
+}
+
+.config-panel-fields input {
+  width: 72px;
+}
+
+.truck-profile-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+
+.truck-profile-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.lane-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.lane {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 140px;
+}
+
+.lane-header {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.lane-empty {
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.truck-token-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.truck-plate {
+  font-weight: 600;
+}
+
+.truck-profile {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+}
+
+.stability-badge {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.stability-badge--neutral {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.stability-badge--progress {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.stability-badge--success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.stability-badge--warning {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.stability-badge--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.telemetry-readout {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+}
+
+.telemetry-readout div {
+  display: flex;
+  flex-direction: column;
+}
+
+.telemetry-readout dt {
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+.telemetry-readout dd {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.queue-panel-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+}
+
+.queue-item {
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.queue-item-profile {
+  color: #6b7280;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.queue-panel-empty {
+  color: #9ca3af;
+}
