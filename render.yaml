@@ -1,0 +1,44 @@
+# Render Blueprint — provisiona app + Postgres juntos.
+# Uso: dashboard Render -> New -> Blueprint -> conectar este repositório ->
+# Render detecta este arquivo automaticamente. Ver README.md, seção "Deploy".
+#
+# Não testado contra uma conta Render real (sem acesso a essa infraestrutura
+# nesta sessão) — os nomes de propriedade em `fromDatabase` seguem a
+# especificação documentada do Render Blueprint; se algo não bater com o
+# provisionamento real, o log de build/deploy do Render mostra exatamente
+# qual env var ficou sem valor.
+services:
+  - type: web
+    name: grainweighing
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: render
+      - key: PGHOST
+        fromDatabase:
+          name: grainweighing-db
+          property: host
+      - key: PGPORT
+        fromDatabase:
+          name: grainweighing-db
+          property: port
+      - key: PGDATABASE
+        fromDatabase:
+          name: grainweighing-db
+          property: database
+      - key: PGUSER
+        fromDatabase:
+          name: grainweighing-db
+          property: user
+      - key: PGPASSWORD
+        fromDatabase:
+          name: grainweighing-db
+          property: password
+
+databases:
+  - name: grainweighing-db
+    plan: free
+    databaseName: grainweighing
+    user: grainweighing
