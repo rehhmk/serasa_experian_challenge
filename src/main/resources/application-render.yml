@@ -1,0 +1,15 @@
+# Perfil do dev environment no Render (render.yaml). PGHOST/PGPORT/PGDATABASE/
+# PGUSER/PGPASSWORD vêm do banco provisionado junto pelo Blueprint — Render só
+# expõe as propriedades separadas, não uma URL JDBC pronta, daí a interpolação
+# aqui em vez de um SPRING_DATASOURCE_URL direto.
+spring:
+  datasource:
+    url: jdbc:postgresql://${PGHOST}:${PGPORT}/${PGDATABASE}
+    username: ${PGUSER}
+    password: ${PGPASSWORD}
+  flyway:
+    locations: classpath:db/migration,classpath:db/dev-migration
+
+logging:
+  level:
+    com.serasaexperian.grainweighing: INFO
