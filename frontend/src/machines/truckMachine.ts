@@ -46,7 +46,7 @@ export interface TruckContext extends TruckInput {
 }
 
 export type TruckEvent =
-  | { type: 'DISPATCH'; scaleId: string; apiKey: string }
+  | { type: 'DISPATCH'; scaleId: string; apiKey: string; profile?: TruckProfileName }
   | { type: 'RAW_READING'; sample: WeightSample }
   | { type: 'RETRY' }
 
@@ -170,9 +170,10 @@ export const truckMachine = setup({
       on: {
         DISPATCH: {
           target: 'travelling',
-          actions: assign(({ event }) => ({
+          actions: assign(({ context, event }) => ({
             scaleId: event.scaleId,
             apiKey: event.apiKey,
+            profile: event.profile ?? context.profile,
             ...freshPassContext(),
           })),
         },
