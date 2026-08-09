@@ -4,4 +4,4 @@ export interface ReadingGenerator {
   next(elapsedMs: number): number
 }
 
-export type TruckProfileName = 'normal'
+export type TruckProfileName = 'normal' | 'noisy' | 'slowEntry'

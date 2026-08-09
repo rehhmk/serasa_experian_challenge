@@ -3,7 +3,9 @@ import { postReading } from '../api/readings'
 import { getWeighingBook } from '../api/reports'
 import { openTransportTransaction } from '../api/transportTransactions'
 import type { WeighingBookItem } from '../api/types'
+import { createNoisyProfile } from '../simulation/readingProfiles/noisy'
 import { createNormalProfile } from '../simulation/readingProfiles/normal'
+import { createSlowEntryProfile } from '../simulation/readingProfiles/slowEntry'
 import type { ReadingGenerator, TruckProfileName } from '../simulation/readingProfiles/types'
 import { STABILIZATION_CONFIG } from '../simulation/stabilizationConfig'
 import {
@@ -55,9 +57,14 @@ function randomNetWeightKg(): number {
 }
 
 function createGeneratorFor(profile: TruckProfileName, tareWeightKg: number): ReadingGenerator {
+  const targetWeightKg = tareWeightKg + randomNetWeightKg()
   switch (profile) {
     case 'normal':
-      return createNormalProfile({ targetWeightKg: tareWeightKg + randomNetWeightKg() })
+      return createNormalProfile({ targetWeightKg })
+    case 'noisy':
+      return createNoisyProfile({ targetWeightKg })
+    case 'slowEntry':
+      return createSlowEntryProfile({ targetWeightKg })
   }
 }
 
