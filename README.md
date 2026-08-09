@@ -148,11 +148,17 @@ conectar o repositório).
 
 ## Sandbox de desenvolvedor (adicional, fora do core avaliado)
 
+**No ar:** https://grainweighing-frontend.onrender.com — Render Static Site,
+build direto do `frontend/` deste repositório (`render.yaml`). `/api/*` é
+reescrito (`frontend/public/_redirects`, formato Render/Netlify) pro backend
+real (`https://grainweighing.onrender.com`) antes de servir o site — mesmo
+papel do proxy do Vite dev server em desenvolvimento, evita CORS sem
+nenhuma alteração no Spring Boot.
+
 [`frontend/`](frontend/) é uma página React + TypeScript + XState **fora do
 escopo do desafio em si** — um sandbox visual pra estressar a API real:
 filas de balanças, caminhões simulados fluindo automaticamente e perfis de
 leitura que exercitam os edge cases documentados do algoritmo de
 estabilização (mediana+MAD, guarda de slope, idempotência, isolamento por
-balança). Zero alteração no código Java — só mais um consumidor da API já
-existente. Detalhes, como rodar e limitações conhecidas:
+balança). Detalhes, como rodar e limitações conhecidas:
 [`frontend/README.md`](frontend/README.md).

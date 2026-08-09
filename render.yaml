@@ -1,12 +1,12 @@
-# Render Blueprint — provisiona app + Postgres juntos.
+# Render Blueprint — provisiona app + Postgres + sandbox front-end juntos.
 # Uso: dashboard Render -> New -> Blueprint -> conectar este repositório ->
 # Render detecta este arquivo automaticamente. Ver README.md, seção "Deploy".
 #
-# Não testado contra uma conta Render real (sem acesso a essa infraestrutura
-# nesta sessão) — os nomes de propriedade em `fromDatabase` seguem a
-# especificação documentada do Render Blueprint; se algo não bater com o
-# provisionamento real, o log de build/deploy do Render mostra exatamente
-# qual env var ficou sem valor.
+# grainweighing (backend) e grainweighing-db já foram provisionados e
+# testados de verdade via `render` CLI (não via "apply" deste Blueprint, que
+# a CLI não suporta) — ver README.md. grainweighing-frontend (sandbox React)
+# segue o mesmo padrão: CLI cria o serviço, este arquivo fica como
+# documentação/IaC de referência.
 services:
   - type: web
     name: grainweighing
@@ -36,6 +36,24 @@ services:
         fromDatabase:
           name: grainweighing-db
           property: password
+
+  # Sandbox React (frontend/) — site estático, zero alteração no backend.
+  # /api/* é reescrito (proxy, status 200) para o backend real, mesmo papel
+  # que o proxy do Vite dev server cumpre em desenvolvimento (vite.config.ts)
+  # — evita CORS sem precisar tocar no Spring Boot. A regra também está
+  # duplicada em frontend/public/_redirects (formato Render/Netlify), que é
+  # o mecanismo que efetivamente funciona sem precisar de "apply" de
+  # Blueprint; a entrada `routes` aqui é só documentação/paridade com a
+  # config real se o serviço algum dia for recriado via Blueprint de verdade.
+  - type: web
+    env: static
+    name: grainweighing-frontend
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://grainweighing.onrender.com/api/*
 
 databases:
   - name: grainweighing-db
