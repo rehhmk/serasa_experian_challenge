@@ -1,7 +1,8 @@
 package com.serasaexperian.grainweighing.reports.weighingbook;
 
-import java.util.List;
 import com.serasaexperian.grainweighing.reports.ReportPeriod;
+import com.serasaexperian.grainweighing.weighing.WeighingRepository;
+import java.util.List;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
@@ -12,10 +13,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class WeighingBookQueryService {
 
+    private final WeighingRepository weighingRepository;
+
+    public WeighingBookQueryService(WeighingRepository weighingRepository) {
+        this.weighingRepository = weighingRepository;
+    }
+
     public List<WeighingBookItem> query(ReportPeriod period, WeighingBookFilters filters, Pageable pageable) {
-        // TODO LOG-015: SELECT paginado, join weighing -> transport_transaction (para
-        // branch_id) / scale / grain_type, filtros from/to/branchId/grainTypeId/
-        // scaleId/plate, ORDER BY recorded_at DESC.
-        throw new UnsupportedOperationException("TODO LOG-015: see WeighingBookQueryService.query() comment");
+        return weighingRepository.search(period.from(), period.to(), filters.branchId(), filters.grainTypeId(),
+                filters.scaleId(), filters.plate(), pageable).getContent();
     }
 }
