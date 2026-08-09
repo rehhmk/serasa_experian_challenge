@@ -1,5 +1,7 @@
 # Grain Weighing Platform — Desafio Técnico Backend
 
+[![CI](https://github.com/rehhmk/serasa_experian_challenge/actions/workflows/ci.yml/badge.svg)](https://github.com/rehhmk/serasa_experian_challenge/actions/workflows/ci.yml)
+
 Solução para o desafio técnico de backend: ingestão, estabilização e
 armazenamento de leituras de peso de balanças rodoviárias (ESP32,
 fire-and-forget) para uma empresa de transporte de grãos.
