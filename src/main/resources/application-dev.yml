@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/grainweighing
+    username: grainweighing
+    password: grainweighing
+  flyway:
+    locations: classpath:db/migration,classpath:db/dev-migration
+
+logging:
+  level:
+    com.serasaexperian.grainweighing: DEBUG

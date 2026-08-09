@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: grainweighing
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+grainweighing:
+  stabilization:
+    min-samples: 20
+    min-valid-ratio: 0.8
+    max-std-dev-kg: 30
+    max-range-kg: 100
+    max-slope-kg-per-sec: 10
+    stability-duration-ms: 3000
+    scale-resolution-kg: 20
+    empty-threshold-kg: 200
+    empty-duration-ms: 1000
+  raw-reading-buffer:
+    flush-batch-size: 50
