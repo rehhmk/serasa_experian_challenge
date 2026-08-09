@@ -191,4 +191,4 @@ de cada sugestão: `USO_DE_IA.md`.
 | 5b | Autenticação das balanças | LOG-014 | ✅ implementado e testado (PR #18) |
 | 5c | Retentativa e idempotência | LOG-008, 016 | ✅ implementado e testado (PRs #17, #19) |
 | 5d | Sugestão de expansão | seção 7 | ✅ |
-| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008 | 🔶 Prompt ok · código já implementado, registro formal na seção 7 do USO_DE_IA ainda pendente |
+| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008, CODE-AI-001 a 007 | ✅ |

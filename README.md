@@ -72,14 +72,10 @@ Estoque/Oportunidade de Margem, Desempenho por Filial). Fluxo completo
 (leitura → estabilização → pesagem → relatório) validado via teste de
 integração com Postgres real (Testcontainers).
 
-Em aberto no momento:
-
-- 🔶 Registro de código gerado por IA (`USO_DE_IA.md`, seção 7) — hoje é um
-  exemplo de template, ainda não os registros reais dos arquivos
-  efetivamente implementados.
-- 🔶 Ambiente de deploy externo — decisão adiada deliberadamente até a lógica
-  core estar pronta (ver seção "Rodando o projeto" abaixo); containerização
-  já está pronta para qualquer alvo.
+Sem itens em aberto no checklist MUST. Registro de código gerado por IA
+(`USO_DE_IA.md`, seção 7, `CODE-AI-001` a `007`) e ambiente de deploy externo
+(seção "Deploy" abaixo) — ambos fechados. SHOULD/COULD continuam documentados
+como roadmap (seção 7 do `BLUEPRINT.md`), não como pendência.
 
 ## Stack
 
