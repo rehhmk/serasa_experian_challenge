@@ -128,30 +128,24 @@ no `BLUEPRINT.md`.
 
 ## Deploy (dev environment)
 
+**No ar:** https://grainweighing.onrender.com — deploy real, feito via
+`render` CLI (Postgres + web service provisionados a partir do
+`render.yaml`), com o seed de dev carregado (`scale-01` /
+`dev-scale-01-key`, mesmos dados do exemplo abaixo). Fluxo completo
+(cadastro → readings até `STABLE` → pesagem → relatório) validado
+manualmente contra essa instância, incluindo os 4 relatórios.
+
 Alvo escolhido: [Render](https://render.com) — free tier sem cartão, sobe
 direto do `Dockerfile` existente. `render.yaml` na raiz é um
 [Blueprint](https://render.com/docs/blueprint-spec) que provisiona o app e
-um Postgres juntos, com as variáveis de ambiente já linkadas entre os dois.
-
-**Passos** (únicos que exigem login na sua conta Render, não automatizáveis
-daqui):
-
-1. Criar conta em [render.com](https://render.com) (não exige cartão no free tier).
-2. Dashboard → **New** → **Blueprint** → conectar este repositório GitHub.
-3. Render detecta `render.yaml` automaticamente e mostra os dois recursos
-   (`grainweighing` web service + `grainweighing-db` Postgres) para revisão.
-4. **Apply** — o build do `Dockerfile` leva alguns minutos na primeira vez.
+um Postgres juntos, com as variáveis de ambiente já linkadas entre os dois
+(também dá pra provisionar via dashboard: **New** → **Blueprint** →
+conectar o repositório).
 
 **Limitações do free tier, para não surpreender durante a entrevista:**
 
 - Web service dorme após ~15 min de inatividade — primeira request depois
   disso leva ~30-50s (cold start) para acordar o container.
-- O Postgres free expira em 30 dias — suficiente para a janela da entrevista,
-  não para manter o ambiente de pé indefinidamente.
-
-**Nota de transparência:** não tenho acesso a uma conta Render nesta sessão
-(sem browser, sem credenciais), então este `render.yaml` não foi validado
-contra um deploy real — os nomes de propriedade em `fromDatabase` seguem a
-especificação documentada do Render Blueprint. Se o deploy falhar por uma
-env var vazia, o log de build do Render aponta exatamente qual — cole aqui
-que ajusto.
+- O Postgres free expira em 30 dias (9 de setembro de 2026) — suficiente
+  para a janela da entrevista, não para manter o ambiente de pé
+  indefinidamente.
