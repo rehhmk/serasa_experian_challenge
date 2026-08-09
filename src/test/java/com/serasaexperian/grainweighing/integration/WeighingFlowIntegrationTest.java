@@ -20,7 +20,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -42,26 +41,6 @@ class WeighingFlowIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private TestRestTemplate restTemplate;
-
-    /**
-     * A execução anterior desta suíte (CI) mostrou uma janela breve de
-     * "connection refused" no Postgres do Testcontainers logo na transição entre
-     * classes de teste (ReportsIntegrationTest termina, esta começa) — provável
-     * reconciliação de rede do container compartilhado, não um problema de
-     * schema/query (ReportsIntegrationTest passa 100% antes disso). Um GET barato
-     * com retry curto absorve essa janela sem depender de entender a causa exata,
-     * em vez de deixar a primeira chamada real do teste (POST) esbarrar nela.
-     */
-    @BeforeEach
-    void waitForDatabaseConnectivity() throws InterruptedException {
-        for (int attempt = 1; attempt <= 20; attempt++) {
-            ResponseEntity<String> response = restTemplate.getForEntity("/api/branches", String.class);
-            if (response.getStatusCode().is2xxSuccessful()) {
-                return;
-            }
-            Thread.sleep(500);
-        }
-    }
 
     /**
      * Confere o status HTTP imediatamente após cada chamada de setup, com o corpo
