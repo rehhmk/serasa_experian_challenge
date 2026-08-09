@@ -1158,6 +1158,28 @@ Usei IA para levantar esse cenário na adversarial review e para comparar "desca
 
 ---
 
+# LOG-017 — Tolerância mínima de outlier como campo configurável
+
+## Problema que identifiquei
+
+Ao implementar `StabilizationEngine.process()`, encontrei um gap entre o `LOG-007` e o código: o doc especifica `threshold = max(3 × robustSigma, toleranciaMinima)`, com a tolerância mínima citada como exemplo de 20kg — mas o `StabilizationProperties` (o record de configuração calibrável do algoritmo) não tinha nenhum campo para esse valor. Sem ele, MAD muito pequeno ou zero (janela muito estável) deixaria o outlier removal hipersensível, rejeitando leituras legítimas.
+
+## Minha decisão
+
+Adicionar `outlierToleranceKg` ao `StabilizationProperties`, mesmo padrão dos outros 9 campos já configuráveis (`grainweighing.stabilization.outlier-tolerance-kg`, default 20kg — mesmo exemplo do LOG-007).
+
+Descartei reusar `scaleResolutionKg` como proxy: apesar de os dois exemplos coincidirem em 20kg, são conceitos ortogonais — resolução física do hardware (granularidade que o sensor discrimina) versus piso estatístico de rejeição de outlier (distância mínima da mediana para ser descartado como ruído). Acoplar os dois criaria um efeito colateral oculto: recalibrar a resolução de uma balança apertaria sem querer o critério de outlier junto, sem forma de desacoplar depois sem migração.
+
+## Assumptions
+
+`outlierToleranceKg = 20 kg` é um exemplo, calibrável por modelo de balança — mesmo espírito dos demais thresholds do LOG-007.
+
+## Como usei IA
+
+Identifiquei o gap durante a implementação guiada por IA de `StabilizationEngine.process()`; usei IA para validar se a tolerância mínima era de fato ausente do record (confirmado via grep no código) e para comparar as duas alternativas (novo campo vs. reusar `scaleResolutionKg`) antes de decidir.
+
+---
+
 # Síntese das minhas decisões
 
 Minha arquitetura final não foi escolhida porque é a mais sofisticada.

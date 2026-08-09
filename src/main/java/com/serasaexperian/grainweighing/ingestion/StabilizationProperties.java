@@ -16,5 +16,6 @@ public record StabilizationProperties(
         long stabilityDurationMs,
         double scaleResolutionKg,
         double emptyThresholdKg,
-        long emptyDurationMs) {
+        long emptyDurationMs,
+        double outlierToleranceKg) {
 }
