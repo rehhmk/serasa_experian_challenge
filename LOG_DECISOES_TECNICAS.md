@@ -1180,6 +1180,40 @@ Identifiquei o gap durante a implementação guiada por IA de `StabilizationEngi
 
 ---
 
+# LOG-018 — Sem retry automático se o salvamento falhar após STABLE
+
+## Problema que identifiquei
+
+Ao desenhar `ScaleSession.addReading()`, percebi uma lacuna de composição com peças que ainda não existem (`ScaleReadingController`, `CompleteWeighingUseCase`): `addReading()` decide `STABLE` de forma síncrona e definitiva, internamente. O fluxo completo, quando as outras peças existirem, é:
+
+```text
+addReading() retorna STABLE
+        ↓
+Controller chama CompleteWeighingUseCase.complete() (salva no banco)
+        ↓
+Controller chama session.markRecorded()
+```
+
+Se `complete()` falhar (ex: `TransportTransaction` não encontrada/já fechada, erro de banco) antes de `markRecorded()` ser chamado, a sessão já está em `STABLE`. Uma vez `STABLE`/`RECORDED`, `addReading()` não roda mais o algoritmo de estabilização nas leituras seguintes — só observa o peso cair para resetar (LOG-016, cenário 1). Ou seja: nenhuma nova tentativa de estabilização/salvamento ocorre para esse caminhão. A pesagem se perde silenciosamente quando o peso cair e a sessão resetar.
+
+## Minha decisão
+
+Aceitar essa limitação como trade-off do MVP — sem retry automático de negócio na camada de sessão. Documentar aqui em vez de resolver agora, porque a solução real depende de peças que ainda não foram implementadas (ex: não transicionar para `STABLE` de forma definitiva até a persistência confirmar, ou uma política de retry no controller) e eu não decido a arquitetura dessas peças antes delas existirem.
+
+## Assumptions
+
+Este é um cenário de falha, não o caminho feliz — a frequência esperada é baixa (falha de banco ou inconsistência de `TransportTransaction`, não parte do fluxo normal). Se se mostrar frequente em produção, revisitar antes de aceitar como trade-off permanente.
+
+## Trigger para revisitar
+
+Ao implementar `ScaleReadingController`/`CompleteWeighingUseCase`: decidir se compensa não finalizar `STABLE` até a persistência confirmar, ou se um alerta/métrica de "sessão perdida pós-STABLE" é suficiente para o MVP.
+
+## Como usei IA
+
+Encontrado durante revisão de design assistida por IA de `ScaleSession.addReading()` — pedi para a IA rastrear o que acontece se o consumidor de `WeightResult(stable=true)` falhar depois, antes de eu escrever o código.
+
+---
+
 # Síntese das minhas decisões
 
 Minha arquitetura final não foi escolhida porque é a mais sofisticada.
