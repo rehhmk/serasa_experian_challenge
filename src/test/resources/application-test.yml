@@ -16,5 +16,6 @@ grainweighing:
     scale-resolution-kg: 20
     empty-threshold-kg: 200
     empty-duration-ms: 200
+    outlier-tolerance-kg: 20
   raw-reading-buffer:
     flush-batch-size: 10
