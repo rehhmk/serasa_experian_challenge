@@ -48,6 +48,7 @@ describe('predictWeighing (mirrors StabilizationEngine.process)', () => {
     expect(result.stable).toBe(false)
     expect(result.samplesUsed).toBe(20)
     expect(result.weightKg).toBeCloseTo(5020, 3)
+    expect(result.slope).toBeCloseTo(15, 3) // kg/s, > maxSlopeKgPerSec=10
   })
 
   it('a clear downward trend is never stable while ramping', () => {
@@ -56,6 +57,7 @@ describe('predictWeighing (mirrors StabilizationEngine.process)', () => {
     expect(result.stable).toBe(false)
     expect(result.samplesUsed).toBe(20)
     expect(result.weightKg).toBeCloseTo(5980, 3)
+    expect(result.slope).toBeCloseTo(-15, 3)
   })
 
   it('oscillation beyond the range/stdDev threshold is not stable', () => {

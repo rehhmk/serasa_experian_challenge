@@ -21,6 +21,8 @@ export interface YardContext {
   numTrucks: number
   auto: boolean
   branchId: string | null
+  /** Só pra exibir nos cards de raia (ex: "SORRISO-MT") — não usado em nenhuma chamada de API. */
+  branchName: string | null
   grainTypeId: string | null
   scales: ScaleSummary[]
   trucks: YardTruck[]
@@ -32,6 +34,8 @@ export interface YardContext {
   bootstrapError: string | null
   /** RUN_CONCURRENCY_DEMO pediu numLanes>=2 antes de poder despachar o par — ver `ready.always`. */
   pendingConcurrencyDemo: boolean
+  /** ENQUEUE_RANDOM_TRUCKS: quantos dos caminhões recém-provisionados devem ganhar perfil aleatório. */
+  pendingRandomEnqueueCount: number
 }
 
 export interface YardInput {
@@ -53,9 +57,15 @@ export type YardEvent =
   // concorrência". O preset só despacha 2 caminhões `normal` pra 2 balanças
   // diferentes ao mesmo tempo, garantindo capacidade primeiro se preciso.
   | { type: 'RUN_CONCURRENCY_DEMO' }
+  // Batch: cresce a frota em `count` e devolve os novos caminhões já na fila,
+  // cada um com um perfil sorteado — "acelera" o sandbox sem precisar
+  // configurar um por um. Sempre cresce (nunca reaproveita caminhão
+  // existente), então sempre passa por reprovisioning de verdade.
+  | { type: 'ENQUEUE_RANDOM_TRUCKS'; count: number }
 
 interface BootstrapOutput {
   branchId: string
+  branchName: string
   grainTypeId: string
   scales: ScaleSummary[]
   trucks: Truck[]
@@ -64,6 +74,12 @@ interface BootstrapOutput {
 interface ReprovisionOutput {
   scales: ScaleSummary[]
   trucks: Truck[]
+}
+
+const ALL_TRUCK_PROFILES: TruckProfileName[] = ['normal', 'noisy', 'slowEntry', 'duplicateRetry']
+
+function randomTruckProfile(): TruckProfileName {
+  return ALL_TRUCK_PROFILES[Math.floor(Math.random() * ALL_TRUCK_PROFILES.length)]
 }
 
 function toYardTrucks(trucks: Truck[]): YardTruck[] {
@@ -97,6 +113,7 @@ export const yardMachine = setup({
       const result = await bootstrapSandbox(input)
       return {
         branchId: result.branch.id,
+        branchName: result.branch.name,
         grainTypeId: result.grainType.id,
         scales: result.scales,
         trucks: result.trucks,
@@ -196,6 +213,7 @@ export const yardMachine = setup({
     numTrucks: input.numTrucks,
     auto: false,
     branchId: null,
+    branchName: null,
     grainTypeId: null,
     scales: [],
     trucks: [],
@@ -204,6 +222,7 @@ export const yardMachine = setup({
     queue: [],
     bootstrapError: null,
     pendingConcurrencyDemo: false,
+    pendingRandomEnqueueCount: 0,
   }),
   initial: 'bootstrapping',
   states: {
@@ -232,6 +251,7 @@ export const yardMachine = setup({
             }
             return {
               branchId: event.output.branchId,
+              branchName: event.output.branchName,
               grainTypeId: event.output.grainTypeId,
               scales: event.output.scales,
               trucks,
@@ -319,6 +339,13 @@ export const yardMachine = setup({
           },
           { actions: 'dispatchConcurrencyPair' },
         ],
+        ENQUEUE_RANDOM_TRUCKS: {
+          target: 'reprovisioning',
+          actions: assign(({ context, event }) => ({
+            numTrucks: context.numTrucks + event.count,
+            pendingRandomEnqueueCount: event.count,
+          })),
+        },
       },
       always: [
         { guard: ({ context }) => context.pendingConcurrencyDemo, actions: 'dispatchConcurrencyPair' },
@@ -338,7 +365,15 @@ export const yardMachine = setup({
           actions: assign(({ context, event, spawn }) => {
             const newScales = event.output.scales
             const existingTruckIds = new Set(context.trucks.map((t) => t.truckId))
-            const newTrucks = toYardTrucks(event.output.trucks.filter((t) => !existingTruckIds.has(t.id)))
+            const newTrucksRaw = toYardTrucks(event.output.trucks.filter((t) => !existingTruckIds.has(t.id)))
+            // ENQUEUE_RANDOM_TRUCKS pediu perfis sorteados pros caminhões que
+            // essa reprovisão específica está criando — RUN_CONCURRENCY_DEMO
+            // e um SET_CONFIG puro não mexem nisso (fica 0), então o default
+            // 'normal' de toYardTrucks vale como antes.
+            const newTrucks =
+              context.pendingRandomEnqueueCount > 0
+                ? newTrucksRaw.map((t) => ({ ...t, profile: randomTruckProfile() }))
+                : newTrucksRaw
 
             const newTruckRefs: Record<string, ActorRefFrom<typeof truckMachine>> = {}
             for (const truck of newTrucks) {
@@ -363,6 +398,7 @@ export const yardMachine = setup({
               lanes: { ...context.lanes, ...lanesFor(newScales) },
               queue: [...context.queue, ...newTrucks.map((t) => t.truckId)],
               bootstrapError: null,
+              pendingRandomEnqueueCount: 0,
             }
           }),
         },

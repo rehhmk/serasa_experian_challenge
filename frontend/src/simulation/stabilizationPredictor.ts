@@ -10,6 +10,8 @@ export interface PredictionResult {
   weightKg: number
   standardDeviation: number
   samplesUsed: number
+  /** kg/s sobre a janela limpa — 0 quando não há amostras suficientes pra calcular. */
+  slope: number
 }
 
 /**
@@ -38,6 +40,7 @@ export function predictWeighing(
       weightKg: roundToResolution(rawMean, config.scaleResolutionKg),
       standardDeviation: populationStdDev(window, rawMean),
       samplesUsed: n,
+      slope: computeSlope(window),
     }
   }
 
@@ -57,6 +60,7 @@ export function predictWeighing(
       weightKg: roundToResolution(basisMean, config.scaleResolutionKg),
       standardDeviation: populationStdDev(basis, basisMean),
       samplesUsed: clean.length,
+      slope: computeSlope(basis),
     }
   }
 
@@ -74,6 +78,7 @@ export function predictWeighing(
     weightKg: roundToResolution(cleanMean, config.scaleResolutionKg),
     standardDeviation: stdDev,
     samplesUsed: clean.length,
+    slope,
   }
 }
 
@@ -85,6 +90,7 @@ export interface PredictorState {
   weightKg: number
   standardDeviation: number
   samplesUsed: number
+  slope: number
 }
 
 export const INITIAL_PREDICTOR_STATE: PredictorState = {
@@ -93,6 +99,7 @@ export const INITIAL_PREDICTOR_STATE: PredictorState = {
   weightKg: 0,
   standardDeviation: 0,
   samplesUsed: 0,
+  slope: 0,
 }
 
 /**
@@ -116,6 +123,7 @@ export function advancePredictor(
       weightKg: candidate.weightKg,
       standardDeviation: candidate.standardDeviation,
       samplesUsed: candidate.samplesUsed,
+      slope: candidate.slope,
     }
   }
 
@@ -126,6 +134,7 @@ export function advancePredictor(
       weightKg: candidate.weightKg,
       standardDeviation: candidate.standardDeviation,
       samplesUsed: candidate.samplesUsed,
+      slope: candidate.slope,
     }
   }
 
@@ -137,6 +146,7 @@ export function advancePredictor(
     weightKg: candidate.weightKg,
     standardDeviation: candidate.standardDeviation,
     samplesUsed: candidate.samplesUsed,
+    slope: candidate.slope,
   }
 }
 

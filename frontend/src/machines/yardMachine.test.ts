@@ -338,3 +338,61 @@ describe('yardMachine RUN_CONCURRENCY_DEMO', () => {
     actor.stop()
   })
 })
+
+describe('yardMachine branchName', () => {
+  it('guarda o nome da filial no bootstrap, só pra exibição', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 1 })
+
+    expect(actor.getSnapshot().context.branchName).toBe(BRANCH.name)
+    actor.stop()
+  })
+})
+
+describe('yardMachine ENQUEUE_RANDOM_TRUCKS', () => {
+  it('cresce a frota em `count`, sorteia um perfil pra cada caminhão novo e enfileira todos', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 1 })
+
+    vi.mocked(provisionScales).mockResolvedValue([])
+    vi.mocked(provisionTrucks).mockResolvedValue([
+      truck('t1', 'SBAAAAA'),
+      truck('t2', 'SBBBBBB'),
+      truck('t3', 'SBCCCCC'),
+      truck('t4', 'SBDDDDD'),
+    ])
+
+    actor.send({ type: 'ENQUEUE_RANDOM_TRUCKS', count: 3 })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const snapshot = actor.getSnapshot()
+    expect(snapshot.value).toBe('ready')
+    expect(snapshot.context.numTrucks).toBe(4) // 1 original + 3 novos
+    expect(snapshot.context.pendingRandomEnqueueCount).toBe(0) // limpo depois de aplicar
+    expect(snapshot.context.trucks).toHaveLength(4)
+    expect(snapshot.context.queue.sort()).toEqual(['t1', 't2', 't3', 't4'])
+    // t1 já existia (era 'normal') — só os 3 novos podem ter ganhado perfil sorteado.
+    expect(snapshot.context.trucks.find((t) => t.truckId === 't1')?.profile).toBe('normal')
+    expect(snapshot.context.truckRefs.t2.getSnapshot().value).toBe('queued')
+    expect(snapshot.context.truckRefs.t3.getSnapshot().value).toBe('queued')
+    expect(snapshot.context.truckRefs.t4.getSnapshot().value).toBe('queued')
+    actor.stop()
+  })
+
+  it('não mexe no perfil de caminhões já existentes, só nos novos desta reprovisão', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 2 })
+    actor.send({ type: 'SET_TRUCK_PROFILE', truckId: 't1', profile: 'noisy' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    vi.mocked(provisionScales).mockResolvedValue([])
+    vi.mocked(provisionTrucks).mockResolvedValue([truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB'), truck('t3', 'SBCCCCC')])
+
+    actor.send({ type: 'ENQUEUE_RANDOM_TRUCKS', count: 1 })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const trucks = actor.getSnapshot().context.trucks
+    expect(trucks.find((t) => t.truckId === 't1')?.profile).toBe('noisy') // preservado
+    actor.stop()
+  })
+})
