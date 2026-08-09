@@ -67,7 +67,9 @@ function lanesFor(scales: ScaleSummary[]): Record<string, string | null> {
   return Object.fromEntries(scales.map((s) => [s.id, null]))
 }
 
-function hasQueuedTruckAndFreeLane(context: YardContext): boolean {
+// Exportado pra UI reusar (ex: desabilitar o botão de despacho manual)
+// sem duplicar a mesma checagem que o guard já faz.
+export function hasQueuedTruckAndFreeLane(context: YardContext): boolean {
   return context.queue.length > 0 && Object.values(context.lanes).some((occupant) => occupant === null)
 }
 
