@@ -169,6 +169,86 @@ describe('truckMachine', () => {
   })
 })
 
+describe('truckMachine — duplicateRetry (LOG-008)', () => {
+  it('só abre a 2ª transação depois de confirmar a 1ª e "esvaziar" de verdade (nunca em paralelo)', async () => {
+    const firstWeighing = { ...CONFIRMED_WEIGHING, id: 'w-1' }
+    const secondWeighing = { ...CONFIRMED_WEIGHING, id: 'w-2', netWeightKg: 23500 }
+    vi.mocked(getWeighingBook)
+      .mockResolvedValueOnce({ period: null, filters: {}, data: [firstWeighing] })
+      .mockResolvedValueOnce({ period: null, filters: {}, data: [secondWeighing] })
+    vi.mocked(openTransportTransaction)
+      .mockResolvedValueOnce({ ...OPEN_TRANSACTION, id: 'tx-1' })
+      .mockResolvedValueOnce({ ...OPEN_TRANSACTION, id: 'tx-2' })
+
+    const actor = createActor(truckMachine, { input: { ...TEST_INPUT, profile: 'duplicateRetry' } }).start()
+    await dispatchAndReachOnScale(actor)
+
+    for (const sample of stableReadingSequence(26)) {
+      actor.send({ type: 'RAW_READING', sample })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    expect(actor.getSnapshot().value).toBe('recorded')
+    expect(actor.getSnapshot().context.transactionId).toBe('tx-1')
+    expect(openTransportTransaction).toHaveBeenCalledTimes(1) // a 2ª ainda não pode existir
+
+    await vi.advanceTimersByTimeAsync(800) // RECORDED_PAUSE_MS
+    expect(actor.getSnapshot().value).toBe('emptying')
+    expect(openTransportTransaction).toHaveBeenCalledTimes(1) // esvaziando != aberto de novo
+
+    await vi.advanceTimersByTimeAsync(100) // um tick do emptyLoop real
+    expect(postReading).toHaveBeenCalledWith(
+      expect.objectContaining({ plate: TEST_INPUT.plate, weightKg: 50 }), // <= emptyThresholdKg real (200)
+    )
+
+    await vi.advanceTimersByTimeAsync(1300) // EMPTY_MARGIN_MS (emptyDurationMs real + margem)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(openTransportTransaction).toHaveBeenCalledTimes(2) // só agora, sessão "resetada"
+    expect(actor.getSnapshot().matches({ onScale: 'collecting' })).toBe(true)
+    expect(actor.getSnapshot().context.passIndex).toBe(2)
+    expect(actor.getSnapshot().context.transactionId).toBe('tx-2')
+    expect(actor.getSnapshot().context.confirmedWeighing).toBeNull() // contexto da 2ª passagem é limpo, não herda o da 1ª
+
+    for (const sample of stableReadingSequence(26)) {
+      actor.send({ type: 'RAW_READING', sample })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(actor.getSnapshot().value).toBe('recorded')
+    expect(actor.getSnapshot().context.confirmedWeighing).toEqual(secondWeighing) // confirma a pesagem certa (a nova)
+    actor.stop()
+  })
+
+  it('falha ao abrir a 2ª transação tenta de novo em openingSecondTransaction, nunca em openingTransaction', async () => {
+    vi.mocked(getWeighingBook).mockResolvedValue({ period: null, filters: {}, data: [CONFIRMED_WEIGHING] })
+    vi.mocked(openTransportTransaction)
+      .mockResolvedValueOnce(OPEN_TRANSACTION) // 1ª passagem ok
+      .mockRejectedValueOnce(new Error('Multiple OPEN TransportTransactions')) // 2ª falha
+      .mockResolvedValueOnce({ ...OPEN_TRANSACTION, id: 'tx-2' }) // retry ok
+
+    const actor = createActor(truckMachine, { input: { ...TEST_INPUT, profile: 'duplicateRetry' } }).start()
+    await dispatchAndReachOnScale(actor)
+    for (const sample of stableReadingSequence(26)) {
+      actor.send({ type: 'RAW_READING', sample })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(800) // RECORDED_PAUSE_MS -> emptying
+    await vi.advanceTimersByTimeAsync(1300) // EMPTY_MARGIN_MS -> openingSecondTransaction (mock rejeita)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(actor.getSnapshot().value).toBe('transactionError')
+    expect(actor.getSnapshot().context.passIndex).toBe(2) // já sabe que a tentativa em curso é a 2ª
+
+    actor.send({ type: 'RETRY' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(actor.getSnapshot().matches({ onScale: 'collecting' })).toBe(true)
+    expect(actor.getSnapshot().context.transactionId).toBe('tx-2')
+    expect(openTransportTransaction).toHaveBeenCalledTimes(3) // nunca reabriu a 1ª de novo
+    actor.stop()
+  })
+})
+
 // leaving/queued dispara sendParent — só existe destino real quando o
 // caminhão é spawnado como filho (uso real em produção, via yardMachine na
 // próxima PR). O harness abaixo espelha esse contrato pra testar o loop

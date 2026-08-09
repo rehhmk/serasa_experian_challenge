@@ -2,12 +2,11 @@ import type { ChangeEvent } from 'react'
 import type { TruckProfileName } from '../../simulation/readingProfiles/types'
 import { YardActorContext } from './yardActorContext'
 
-// duplicateRetry chega numa PR futura (a yardMachine e o <select> abaixo já
-// suportam qualquer valor de TruckProfileName sem mudança estrutural).
 const AVAILABLE_PROFILES: { value: TruckProfileName; label: string }[] = [
   { value: 'normal', label: 'Normal' },
   { value: 'noisy', label: 'Caminhão ruidoso' },
   { value: 'slowEntry', label: 'Entrada lenta' },
+  { value: 'duplicateRetry', label: 'Retry duplicado' },
 ]
 
 function parsePositiveInt(value: string): number | null {

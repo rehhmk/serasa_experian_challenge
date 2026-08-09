@@ -3,6 +3,7 @@ import { postReading } from '../api/readings'
 import { getWeighingBook } from '../api/reports'
 import { openTransportTransaction } from '../api/transportTransactions'
 import type { WeighingBookItem } from '../api/types'
+import { createDuplicateRetryProfile } from '../simulation/readingProfiles/duplicateRetry'
 import { createNoisyProfile } from '../simulation/readingProfiles/noisy'
 import { createNormalProfile } from '../simulation/readingProfiles/normal'
 import { createSlowEntryProfile } from '../simulation/readingProfiles/slowEntry'
@@ -23,6 +24,9 @@ const MAX_CONFIRM_ATTEMPTS = 5
 const UNCONFIRMED_PAUSE_MS = 2000
 const RECORDED_PAUSE_MS = 800
 const LEAVE_MS = 600
+// Tempo esvaziando antes de reabrir uma 2ª transação (duplicateRetry, LOG-008)
+// — emptyDurationMs real do backend + margem pra jitter de rede.
+const EMPTY_MARGIN_MS = STABILIZATION_CONFIG.emptyDurationMs + 300
 
 export interface TruckInput {
   descriptorId: string
@@ -39,6 +43,8 @@ export interface TruckContext extends TruckInput {
   apiKey: string | null
   transactionId: string | null
   passStartedAtMs: number | null
+  /** Qual passagem está em curso — só duplicateRetry chega a 2 (LOG-008). */
+  passIndex: 1 | 2
   generator: ReadingGenerator | null
   samples: WeightSample[]
   predictor: PredictorState
@@ -65,6 +71,8 @@ function createGeneratorFor(profile: TruckProfileName, tareWeightKg: number): Re
       return createNoisyProfile({ targetWeightKg })
     case 'slowEntry':
       return createSlowEntryProfile({ targetWeightKg })
+    case 'duplicateRetry':
+      return createDuplicateRetryProfile({ targetWeightKg })
   }
 }
 
@@ -76,19 +84,46 @@ function nextPredictor(context: TruckContext, sample: WeightSample): PredictorSt
   return advancePredictor(context.predictor, nextWindow(context, sample), sample.timestampMs)
 }
 
-function freshPassContext(): Pick<
+function freshPassContext(passIndex: 1 | 2 = 1): Pick<
   TruckContext,
-  'transactionId' | 'passStartedAtMs' | 'generator' | 'samples' | 'predictor' | 'confirmedWeighing' | 'confirmAttempts' | 'lastError'
+  | 'transactionId'
+  | 'passStartedAtMs'
+  | 'passIndex'
+  | 'generator'
+  | 'samples'
+  | 'predictor'
+  | 'confirmedWeighing'
+  | 'confirmAttempts'
+  | 'lastError'
 > {
   return {
     transactionId: null,
     passStartedAtMs: null,
+    passIndex,
     generator: null,
     samples: [],
     predictor: INITIAL_PREDICTOR_STATE,
     confirmedWeighing: null,
     confirmAttempts: 0,
     lastError: null,
+  }
+}
+
+// Usado nos dois onDone de abertura de transação (1ª e 2ª passagem): preserva
+// o passIndex atual do contexto (freshPassContext() já cuida disso) e só
+// preenche o que acabou de ficar disponível.
+function nextPassContext(
+  context: TruckContext,
+  transactionId: string,
+): Pick<
+  TruckContext,
+  'transactionId' | 'passStartedAtMs' | 'passIndex' | 'generator' | 'samples' | 'predictor' | 'confirmedWeighing' | 'confirmAttempts' | 'lastError'
+> {
+  return {
+    ...freshPassContext(context.passIndex),
+    transactionId,
+    passStartedAtMs: Date.now(),
+    generator: createGeneratorFor(context.profile, context.tareWeightKg),
   }
 }
 
@@ -145,6 +180,21 @@ export const truckMachine = setup({
         return envelope.data[0] ?? null
       },
     ),
+
+    // Só duplicateRetry usa isto (LOG-008): faz o peso "cair" de verdade no
+    // backend real (weight <= emptyThresholdKg) até a sessão da balança
+    // resetar (emptyDurationMs) — só então a 2ª transação pode abrir sem
+    // colidir com a 1ª (IncorrectResultSizeDataAccessException confirmado em
+    // CompleteWeighingUseCase.resolveOpenTransaction).
+    emptyLoop: fromCallback<
+      TruckEvent,
+      { scaleId: string; apiKey: string; plate: string; intervalMs: number }
+    >(({ input }) => {
+      const timer = setInterval(() => {
+        void postReading({ scaleId: input.scaleId, apiKey: input.apiKey, plate: input.plate, weightKg: 50 })
+      }, input.intervalMs)
+      return () => clearInterval(timer)
+    }),
   },
   guards: {
     nextIsStable: ({ context, event }) =>
@@ -152,6 +202,8 @@ export const truckMachine = setup({
     nextIsStabilizing: ({ context, event }) =>
       event.type === 'RAW_READING' && nextPredictor(context, event.sample).status === 'STABILIZING',
     canRetryConfirmation: ({ context }) => context.confirmAttempts < MAX_CONFIRM_ATTEMPTS,
+    isFirstPassOfDuplicateRetry: ({ context }) => context.profile === 'duplicateRetry' && context.passIndex === 1,
+    isSecondPass: ({ context }) => context.passIndex === 2,
   },
   actions: {
     applyReading: assign(({ context, event }) => {
@@ -199,11 +251,7 @@ export const truckMachine = setup({
         }),
         onDone: {
           target: 'onScale',
-          actions: assign(({ context, event }) => ({
-            transactionId: event.output.id,
-            passStartedAtMs: Date.now(),
-            generator: createGeneratorFor(context.profile, context.tareWeightKg),
-          })),
+          actions: assign(({ context, event }) => nextPassContext(context, event.output.id)),
         },
         onError: {
           target: 'transactionError',
@@ -272,10 +320,54 @@ export const truckMachine = setup({
       after: { [UNCONFIRMED_PAUSE_MS]: 'leaving' },
     },
     recorded: {
-      after: { [RECORDED_PAUSE_MS]: 'leaving' },
+      after: {
+        [RECORDED_PAUSE_MS]: [
+          { guard: 'isFirstPassOfDuplicateRetry', target: 'emptying', actions: assign({ passIndex: 2 }) },
+          { target: 'leaving' },
+        ],
+      },
+    },
+    // Só a 1ª passagem do duplicateRetry passa por aqui — espelha o
+    // gate real de peso vazio do backend (emptyThresholdKg/emptyDurationMs)
+    // até a sessão da balança resetar de verdade, não um atraso artificial.
+    emptying: {
+      invoke: {
+        id: 'emptyLoop',
+        src: 'emptyLoop',
+        input: ({ context }) => ({
+          scaleId: context.scaleId!,
+          apiKey: context.apiKey!,
+          plate: context.plate,
+          intervalMs: READING_INTERVAL_MS,
+        }),
+      },
+      after: { [EMPTY_MARGIN_MS]: 'openingSecondTransaction' },
+    },
+    openingSecondTransaction: {
+      invoke: {
+        src: 'openTransaction',
+        input: ({ context }) => ({
+          truckId: context.truckId,
+          grainTypeId: context.grainTypeId,
+          branchId: context.branchId,
+        }),
+        onDone: {
+          target: 'onScale',
+          actions: assign(({ context, event }) => nextPassContext(context, event.output.id)),
+        },
+        onError: {
+          target: 'transactionError',
+          actions: assign({ lastError: ({ event }) => String(event.error) }),
+        },
+      },
     },
     transactionError: {
-      on: { RETRY: 'openingTransaction' },
+      on: {
+        RETRY: [
+          { guard: 'isSecondPass', target: 'openingSecondTransaction' },
+          { target: 'openingTransaction' },
+        ],
+      },
     },
     leaving: {
       entry: sendParent(({ context }) => ({
