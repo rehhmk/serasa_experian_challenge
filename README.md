@@ -150,10 +150,14 @@ conectar o repositório).
 
 **No ar:** https://grainweighing-frontend.onrender.com — Render Static Site,
 build direto do `frontend/` deste repositório (`render.yaml`). `/api/*` é
-reescrito (`frontend/public/_redirects`, formato Render/Netlify) pro backend
-real (`https://grainweighing.onrender.com`) antes de servir o site — mesmo
-papel do proxy do Vite dev server em desenvolvimento, evita CORS sem
-nenhuma alteração no Spring Boot.
+reescrito (proxy, status 200) pro backend real
+(`https://grainweighing.onrender.com`) antes de servir o site — mesmo papel
+do proxy do Vite dev server em desenvolvimento, evita CORS sem nenhuma
+alteração no Spring Boot. Validado manualmente ponta a ponta contra a
+instância real: GET, POST com corpo JSON, header `X-Scale-Key` passando
+íntegro pelo proxy, e autenticação de verdade (chave errada → 401, não um
+bypass). Detalhes de como a regra de rewrite foi criada:
+[`frontend/README.md`](frontend/README.md#deploy).
 
 [`frontend/`](frontend/) é uma página React + TypeScript + XState **fora do
 escopo do desafio em si** — um sandbox visual pra estressar a API real:

@@ -40,11 +40,18 @@ services:
   # Sandbox React (frontend/) — site estático, zero alteração no backend.
   # /api/* é reescrito (proxy, status 200) para o backend real, mesmo papel
   # que o proxy do Vite dev server cumpre em desenvolvimento (vite.config.ts)
-  # — evita CORS sem precisar tocar no Spring Boot. A regra também está
-  # duplicada em frontend/public/_redirects (formato Render/Netlify), que é
-  # o mecanismo que efetivamente funciona sem precisar de "apply" de
-  # Blueprint; a entrada `routes` aqui é só documentação/paridade com a
-  # config real se o serviço algum dia for recriado via Blueprint de verdade.
+  # — evita CORS sem precisar tocar no Spring Boot.
+  #
+  # A entrada `routes` abaixo é só documentação/IaC de referência — não é o
+  # que efetivamente cria a regra. Render só aplica `routes` de render.yaml em
+  # serviços sob Blueprint ativo ("New" -> "Blueprint" no dashboard); como
+  # grainweighing-frontend foi criado direto via `render` CLI (mesmo padrão
+  # dos outros dois serviços), a regra real foi criada com uma chamada direta
+  # à API REST do Render (POST /services/{id}/routes — a CLI não tem
+  # subcomando pra isso, só a API pública documentada em
+  # api-docs.render.com/reference/add-route). Um arquivo `_redirects`
+  # (formato Netlify) foi tentado primeiro e NÃO funciona no Render — só
+  # existe pra registro do que já foi descartado.
   - type: web
     env: static
     name: grainweighing-frontend
