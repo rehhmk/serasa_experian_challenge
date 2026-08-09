@@ -30,6 +30,8 @@ export interface YardContext {
   /** truckIds aguardando raia livre, em ordem de chegada. */
   queue: string[]
   bootstrapError: string | null
+  /** RUN_CONCURRENCY_DEMO pediu numLanes>=2 antes de poder despachar o par — ver `ready.always`. */
+  pendingConcurrencyDemo: boolean
 }
 
 export interface YardInput {
@@ -46,6 +48,11 @@ export type YardEvent =
   | { type: 'REQUEUE'; descriptorId: string }
   | { type: 'RETRY' }
   | { type: 'RESET' }
+  // Isolamento por balança (ScaleSessionManager, ConcurrentHashMap<scaleId,...>)
+  // não depende do formato das leituras — não existe um "perfil de
+  // concorrência". O preset só despacha 2 caminhões `normal` pra 2 balanças
+  // diferentes ao mesmo tempo, garantindo capacidade primeiro se preciso.
+  | { type: 'RUN_CONCURRENCY_DEMO' }
 
 interface BootstrapOutput {
   branchId: string
@@ -142,6 +149,45 @@ export const yardMachine = setup({
         queue: context.queue.slice(1),
       })
     }),
+
+    // Despacha até 2 caminhões de perfil "normal" pra 2 balanças livres
+    // distintas, na mesma leva de ações — mais fiel a "ao mesmo tempo" do
+    // que 2 DISPATCH_NEXT manuais em sequência (que dependem de quem chama).
+    // Melhor esforço: despacha o que der (0, 1 ou 2), nunca falha.
+    dispatchConcurrencyPair: enqueueActions(({ context, enqueue }) => {
+      enqueue.assign({ pendingConcurrencyDemo: false })
+
+      const freeLaneIds = Object.entries(context.lanes)
+        .filter(([, occupant]) => occupant === null)
+        .map(([scaleId]) => scaleId)
+      const normalQueuedTruckIds = context.queue.filter(
+        (truckId) => context.trucks.find((t) => t.truckId === truckId)?.profile === 'normal',
+      )
+      const pairSize = Math.min(2, freeLaneIds.length, normalQueuedTruckIds.length)
+
+      const dispatchedTruckIds: string[] = []
+      const nextLanes = { ...context.lanes }
+      for (let i = 0; i < pairSize; i++) {
+        const truckId = normalQueuedTruckIds[i]
+        const scaleId = freeLaneIds[i]
+        const truck = context.trucks.find((t) => t.truckId === truckId)
+        const ref = context.truckRefs[truckId]
+        const apiKey = getScaleKey(scaleId)
+        if (!truck || !ref || !apiKey) {
+          continue
+        }
+        enqueue.sendTo(ref, { type: 'DISPATCH', scaleId, apiKey, profile: truck.profile })
+        nextLanes[scaleId] = truckId
+        dispatchedTruckIds.push(truckId)
+      }
+
+      if (dispatchedTruckIds.length > 0) {
+        enqueue.assign({
+          lanes: nextLanes,
+          queue: context.queue.filter((id) => !dispatchedTruckIds.includes(id)),
+        })
+      }
+    }),
   },
 }).createMachine({
   id: 'yard',
@@ -157,6 +203,7 @@ export const yardMachine = setup({
     lanes: {},
     queue: [],
     bootstrapError: null,
+    pendingConcurrencyDemo: false,
   }),
   initial: 'bootstrapping',
   states: {
@@ -264,8 +311,19 @@ export const yardMachine = setup({
             }
           }),
         },
+        RUN_CONCURRENCY_DEMO: [
+          {
+            guard: ({ context }) => context.numLanes < 2,
+            target: 'reprovisioning',
+            actions: assign({ numLanes: 2, pendingConcurrencyDemo: true }),
+          },
+          { actions: 'dispatchConcurrencyPair' },
+        ],
       },
-      always: { guard: 'autoCanDispatch', actions: 'dispatchNext' },
+      always: [
+        { guard: ({ context }) => context.pendingConcurrencyDemo, actions: 'dispatchConcurrencyPair' },
+        { guard: 'autoCanDispatch', actions: 'dispatchNext' },
+      ],
     },
     reprovisioning: {
       invoke: {

@@ -265,3 +265,76 @@ describe('yardMachine dispatchNext sem apiKey conhecida', () => {
     actor.stop()
   })
 })
+
+describe('yardMachine RUN_CONCURRENCY_DEMO', () => {
+  it('com raias e caminhões normal suficientes, despacha 2 de uma vez pra 2 balanças distintas', async () => {
+    mockBootstrap(
+      [scale('sandbox-a'), scale('sandbox-b')],
+      [truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB'), truck('t3', 'SBCCCCC')],
+    )
+    const actor = await bootAndReachReady({ numLanes: 2, numTrucks: 3 })
+
+    actor.send({ type: 'RUN_CONCURRENCY_DEMO' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const snapshot = actor.getSnapshot()
+    expect(snapshot.value).toBe('ready')
+    expect(Object.values(snapshot.context.lanes).sort()).toEqual(['t1', 't2'])
+    expect(snapshot.context.queue).toEqual(['t3'])
+    actor.stop()
+  })
+
+  it('com menos de 2 raias, reprovisiona pra 2 e despacha o par sozinho assim que fica pronto', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 2 })
+
+    vi.mocked(provisionScales).mockResolvedValue([scale('sandbox-b')])
+    vi.mocked(provisionTrucks).mockResolvedValue([truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB')])
+    setScaleKey('sandbox-b', 'key-sandbox-b') // provisionScales real seta a key (PR2); aqui está mockado, então simulamos o efeito
+
+    actor.send({ type: 'RUN_CONCURRENCY_DEMO' })
+    await vi.advanceTimersByTimeAsync(0) // reprovisiona (delta=1 balança)
+    await vi.advanceTimersByTimeAsync(0) // volta pra "ready" e despacha o par sozinho (always)
+
+    const snapshot = actor.getSnapshot()
+    expect(snapshot.value).toBe('ready')
+    expect(snapshot.context.numLanes).toBe(2)
+    expect(Object.keys(snapshot.context.lanes).sort()).toEqual(['sandbox-a', 'sandbox-b'])
+    expect(Object.values(snapshot.context.lanes).sort()).toEqual(['t1', 't2'])
+    expect(snapshot.context.queue).toEqual([])
+    actor.stop()
+  })
+
+  it('com só 1 caminhão normal disponível, despacha só esse (melhor esforço, nunca falha)', async () => {
+    mockBootstrap([scale('sandbox-a'), scale('sandbox-b')], [truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB')])
+    const actor = await bootAndReachReady({ numLanes: 2, numTrucks: 2 })
+    actor.send({ type: 'SET_TRUCK_PROFILE', truckId: 't2', profile: 'noisy' }) // só t1 continua "normal"
+    await vi.advanceTimersByTimeAsync(0)
+
+    actor.send({ type: 'RUN_CONCURRENCY_DEMO' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const snapshot = actor.getSnapshot()
+    expect(snapshot.context.lanes['sandbox-a']).toBe('t1')
+    expect(snapshot.context.lanes['sandbox-b']).toBeNull() // não inventa um 2º caminhão pra preencher
+    expect(snapshot.context.queue).toEqual(['t2'])
+    actor.stop()
+  })
+
+  it('sem raia livre, não despacha nada (idempotente, não trava)', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA'), truck('t2', 'SBBBBBB')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 2 })
+    actor.send({ type: 'DISPATCH_NEXT' }) // ocupa a única raia com t1
+    await vi.advanceTimersByTimeAsync(0)
+    expect(actor.getSnapshot().context.lanes['sandbox-a']).toBe('t1')
+
+    actor.send({ type: 'RUN_CONCURRENCY_DEMO' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const snapshot = actor.getSnapshot()
+    expect(snapshot.value).toBe('ready')
+    expect(snapshot.context.lanes['sandbox-a']).toBe('t1') // inalterado
+    expect(snapshot.context.queue).toEqual(['t2'])
+    actor.stop()
+  })
+})
