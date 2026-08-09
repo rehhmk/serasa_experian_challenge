@@ -6,13 +6,12 @@ import static org.assertj.core.api.Assertions.within;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
  * Cenários definidos em LOG-007 / LOG-012 (10 testes que valem a pena escrever).
- * Os 8 testes do algoritmo puro (StabilizationEngine) estão implementados abaixo.
- * Os 2 testes de máquina de estados (ScaleSession) continuam @Disabled — próxima PR.
+ * Os 8 primeiros cobrem o algoritmo puro (StabilizationEngine); os 2 últimos
+ * cobrem a confirmação de estabilidade no tempo, feita por ScaleSession.
  */
 class StabilizationEngineTest {
 
@@ -149,14 +148,32 @@ class StabilizationEngineTest {
     }
 
     @Test
-    @Disabled("TODO LOG-007/LOG-016: implementar maquina de estados em ScaleSession")
     void stableForLessThanStabilityDurationDoesNotSave() {
-        // criterios passam mas por menos tempo que STABILITY_DURATION -> nao salva ainda
+        ScaleSession session = new ScaleSession("scale-01");
+        WeightResult last = null;
+        for (int i = 0; i < 20; i++) {
+            last = session.addReading("AAA0001", new WeightSample(i * 500L, 5000.0), CONFIG, engine);
+        }
+        assertThat(session.state()).isEqualTo(SessionState.STABILIZING);
+        assertThat(last.stable()).isFalse();
+
+        for (int i = 20; i < 25; i++) {
+            last = session.addReading("AAA0001", new WeightSample(i * 500L, 5000.0), CONFIG, engine);
+        }
+        assertThat(session.state()).isEqualTo(SessionState.STABILIZING);
+        assertThat(last.stable()).isFalse();
     }
 
     @Test
-    @Disabled("TODO LOG-007/LOG-016: implementar maquina de estados em ScaleSession")
     void stableForFullStabilityDurationSaves() {
-        // criterios mantidos pelo tempo minimo -> STABLE, salva
+        ScaleSession session = new ScaleSession("scale-01");
+        WeightResult last = null;
+        for (int i = 0; i < 26; i++) {
+            last = session.addReading("AAA0001", new WeightSample(i * 500L, 5000.0), CONFIG, engine);
+        }
+        assertThat(session.state()).isEqualTo(SessionState.STABLE);
+        assertThat(last.stable()).isTrue();
+        assertThat(last.weightKg()).isEqualTo(5000.0, within(0.001));
+        assertThat(last.standardDeviation()).isEqualTo(0.0, within(0.001));
     }
 }
