@@ -573,6 +573,12 @@ Não resolve um requisito atual ou adiciona custo injustificado.
 | Relatórios COULD (Qualidade da Estabilização, Auditoria Técnica) | Dependem de raw_readings; não essenciais ao requisito atual | REJECTED (nesta fase) |
 | Não expor `plate` em relatórios agregados/dashboard | Achado de LGPD; necessidade mínima de dado pessoal | ACCEPTED |
 | Relatórios de umidade/classificação/contratos/frete/etc. | Dado não existe no protocolo/modelo | REJECTED |
+| `outlierToleranceKg` como campo configurável | Gap real entre LOG-007 e o record de config; ver LOG-017 | ACCEPTED |
+| Conflito de placa verificado também em STABLE/RECORDED | LOG-016 só cobre "antes de STABLE"; risco de reabrir transaction já completada; ver LOG-018 | REJECTED |
+| Sem retry automático se a finalização falhar pós-STABLE | Trade-off aceito do MVP, peças dependentes ainda não existiam; ver LOG-018 | ACCEPTED (nesta fase) |
+| `findByTruckIdAndBranchIdAndStatus` (query já filtrada por filial) | Colapsa "sem transaction" e "transaction na filial errada" no mesmo resultado | MODIFIED (trocado por findByTruckIdAndStatus + checagem explícita) |
+| Clock injetável no ScaleReadingController só para testabilidade | Custo no hot path sem necessidade real; testei com config de threshold rápido em vez | REJECTED |
+| Render como alvo de deploy do dev environment | Free tier sem cartão, reaproveita Dockerfile existente; ver comparação Railway/Fly.io/VM | ACCEPTED |
 
 ---
 
@@ -633,50 +639,254 @@ Justificativa técnica.
 
 ---
 
-# 7. Exemplo de registro futuro de código
+# 7. Registro real de código gerado por IA
 
-> ⚠️ **Pendente antes do envio.** O registro abaixo é apenas o template preenchido como exemplo, não um `CODE-AI-XXX` real. Antes de enviar, substituir por registros reais dos arquivos efetivamente gerados/modificados com apoio de IA — arquivo real, prompt exato, trecho de código gerado e minha revisão.
+A partir daqui a IA (Claude Code) deixou de ser só interlocutor de design (seções 3 e AI-001–AI-009) e passou a implementar diretamente — sempre em modo agente, nunca copiando/colando de um chat. Meu papel nessa fase mudou de forma, não desapareceu: para cada componente eu (1) exigi um plano por escrito antes de qualquer código — arquivos, desenho, testes, dúvidas em aberto — conforme o protocolo que eu mesmo defini no `CLAUDE.md` seção 24; (2) fui interrompido explicitamente sempre que a IA encontrou uma decisão de engenharia ou de produto não coberta pelos LOGs existentes, e decidi cada uma dessas vezes via pergunta direta, não a IA sozinha; (3) só aceitei um componente como pronto depois de `mvn clean verify` e, nos casos de integração (Postgres real via Testcontainers, deploy), validação contra infraestrutura real, não só teste unitário.
 
-```md
-## CODE-AI-001 — StabilityAlgorithm
+Os 7 registros abaixo cobrem os componentes que faltavam do MVP (`StabilizationEngine` → relatórios) e o deploy do dev environment — nessa ordem, PRs #16 a #24 do repositório.
+
+## CODE-AI-001 — StabilizationEngine (LOG-007)
 
 ### Problema que eu queria resolver
 
-Implementar a estratégia de estabilidade que defini no design.
+Implementar o algoritmo puro de estabilização — mediana+MAD para remoção de outlier, critérios de range/stdDev/slope, peso final arredondado — que eu já havia desenhado no LOG-007, mas que ainda era um stub (`UnsupportedOperationException`).
 
 ### Minha direção de implementação
 
-Eu já havia decidido usar:
-
-- janela limitada;
-- mediana;
-- spread;
-- trend;
-- confirmação consecutiva.
+Pipeline já decidido no LOG-007: mediana+MAD → threshold de outlier → range/stdDev/slope sobre amostras limpas → peso final. O que faltava era a implementação Java em si.
 
 ### Prompt
 
-> Implemente esta estratégia seguindo estes critérios...
+> "vamos seguir para a implementação da stabilizationEngine. mesmo processo do nosso contexto"
+
+Pedi explicitamente o mesmo processo já usado nas decisões de arquitetura anteriores: plano por escrito, minhas dúvidas resolvidas, só depois código.
 
 ### Código gerado
 
-`StabilityAlgorithm.java`
+Arquivos: `StabilizationEngine.java`, `StabilizationProperties.java`, `StabilizationEngineTest.java`, `application.yml`, `application-test.yml`, `LOG_DECISOES_TECNICAS.md` (novo LOG-017).
 
 ### Minha revisão
 
-MODIFIED
+Antes de aceitar o plano, a IA identificou um gap real entre o LOG-007 e o código existente: o LOG-007 já especificava um piso mínimo de tolerância para outlier (`threshold = max(3×robustSigma, toleranciaMinima)`), mas o `StabilizationProperties` não tinha campo para isso. Me foi apresentada a escolha via pergunta direta:
 
-Eu alterei:
-- nomes;
-- limites;
-- comportamento em insufficient samples;
-- configuração;
-- tratamento de outliers.
+- **ACCEPTED** — adicionar `outlierToleranceKg` como campo configurável (mesmo padrão dos outros 9 thresholds), em vez da alternativa de reusar `scaleResolutionKg` como proxy — decidi que são conceitos ortogonais (resolução de hardware ≠ piso estatístico de outlier) e acoplá-los criaria efeito colateral oculto.
+- **ACCEPTED** — registrar essa decisão como `LOG-017`, mesmo formato dos outros logs, já nesta PR (em vez de só mencionar na descrição da PR).
+- **ACCEPTED** — o pipeline do algoritmo em si (mediana+MAD, critérios, arredondamento) exatamente como eu já tinha desenhado no LOG-007, sem mudança.
+
+### Por que
+
+O gap do `outlierToleranceKg` é exatamente o tipo de dívida entre documentação e código que eu não quero deixar passar silenciosamente — melhor formalizar como decisão pequena (LOG-017) do que deixar como comentário perdido numa PR.
 
 ### Validação
 
-`StabilityAlgorithmTest`
-```
+8 testes unitários com datasets calculados à mão (ex: outlier isolado, tendência de subida, oscilação sistemática — cada um isolando um critério específico do algoritmo). `mvn clean verify` completo (34 testes) antes do merge; CI verde na PR antes do squash merge (#16).
+
+---
+
+## CODE-AI-002 — ScaleSession, máquina de estados (LOG-007/LOG-016)
+
+### Problema que eu queria resolver
+
+A confirmação de estabilidade no tempo (`COLLECTING → STABILIZING → STABLE`), troca de placa mid-window, e reset da sessão depois que o peso cai perto de zero pós-SAVE — tudo já decidido conceitualmente no LOG-016, faltando a implementação.
+
+### Minha direção de implementação
+
+LOG-016 já definia os dois cenários (placa muda antes de STABLE → descarta janela; peso cai perto de zero pós-SAVE → reset), mas não cobria um sub-caso: o que fazer se a placa mudar **depois** de STABLE, enquanto a sessão só está esperando o caminhão sair.
+
+### Prompt
+
+Sequência de "sim por favor" (retomando o trabalho após o merge do `StabilizationEngine`) seguida de "continue until project is finished please" — pedi para a IA seguir de forma mais autônoma pelas próximas peças, mas isso não significou menos checkpoints de decisão, só menos pausas para eu confirmar cada passo trivial.
+
+### Código gerado
+
+Arquivos: `ScaleSession.java`, `ScaleSessionManagerTest.java`, `StabilizationEngineTest.java` (2 testes de duração), `LOG_DECISOES_TECNICAS.md` (novo LOG-018).
+
+### Minha revisão
+
+- **ACCEPTED** — conflito de placa checado só em `COLLECTING`/`STABILIZING`; uma vez `STABLE`/`RECORDED`, uma leitura com placa diferente é ignorada para identidade da sessão (só o gate de peso-quase-zero fecha a sessão). A IA me apresentou o argumento a favor (evita reabrir uma `TransportTransaction` já `COMPLETED` por 1 frame de LPR errado) e o argumento contra (reage mais devagar a um caminhão novo genuíno) — decidi pelo primeiro, com o gate de peso como rede de segurança.
+- **ACCEPTED** — registrar como `LOG-018` um gap descoberto durante o design, não durante o código: se `STABLE` for atingido mas a finalização de negócio (peça ainda não implementada nesse momento) falhar, a sessão fica presa sem retry automático. Decidi aceitar isso como trade-off do MVP em vez de bloquear a PR por uma peça que ainda nem existia.
+- **MODIFIED** — a IA propôs um bound fixo (`MAX_WINDOW_SAMPLES = 40`) para a janela; pedi (e aceitei) a correção para `Math.max(40, config.minSamples())`, porque um bound fixo desacoplado do `minSamples` configurável criaria um bug silencioso se alguém recalibrasse o threshold no futuro.
+
+### Por que
+
+O ponto do conflito de placa pós-STABLE não estava, a rigor, coberto por nenhuma decisão minha anterior — é exatamente o tipo de ambiguidade que eu quero decidir explicitamente, não deixar a IA resolver sozinha por inferência.
+
+### Validação
+
+5 testes reativados (2 de duração no `StabilizationEngineTest`, 3 de comportamento de sessão no `ScaleSessionManagerTest`, incluindo concorrência com 16 threads). `mvn clean verify`, CI verde (#17).
+
+---
+
+## CODE-AI-003 — ScaleAuthFilter (LOG-014)
+
+### Problema que eu queria resolver
+
+Validar o header `X-Scale-Key` antes do hot path, sem tocar o banco por reading — já decidido no LOG-014, faltando a implementação do filtro.
+
+### Minha direção de implementação
+
+SHA-256 contra `ScaleCredentialsCache` em memória (LOG-014), 401 genérico sem revelar se o `scaleId` existe.
+
+### Prompt
+
+Continuação do mesmo fluxo autônomo ("continue until project is finished please").
+
+### Código gerado
+
+Arquivos: `ScaleAuthFilter.java` (implementação + duas classes internas para tornar o corpo da request relível depois do filtro ler o `id`), `IngestionWebConfig.java`, `ScaleAuthFilterTest.java`.
+
+### Minha revisão
+
+- **ACCEPTED** — usar `ContentCachingRequestWrapper` + um wrapper próprio para "devolver" os bytes já lidos ao controller depois do filtro espiar o campo `id` do corpo — é o idiom padrão do Spring para esse problema específico (stream de single-consumo lido por dois consumidores diferentes), não uma abstração inventada.
+- **ACCEPTED** — reusar o record `ScaleReadingRequest` (via `ObjectMapper`) para extrair o `id`, em vez de parsear um JSON node cru — mais simples e reaproveita um tipo que já existia.
+- **ACCEPTED** — usar `MockHttpServletRequest`/`MockFilterChain` do `spring-test` (já era dependência) em vez de mocks manuais do Servlet API para os testes.
+
+### Por que
+
+Não tinha alternativa mais simples para o problema do stream single-consumo — validei que era o padrão real do Spring, não uma solução ad-hoc.
+
+### Validação
+
+7 testes (incluindo um que criei a mais, além dos 4 já fixados como `@Disabled`, para provar que o corpo realmente chega intacto no controller depois do filtro). CI verde (#18).
+
+---
+
+## CODE-AI-004 — CompleteWeighingUseCase (LOG-008/009/011)
+
+### Problema que eu queria resolver
+
+O único ponto de finalização de uma pesagem: resolver a `TransportTransaction` OPEN do caminhão, calcular net/custo em `BigDecimal`, persistir, atualizar estoque, completar a transaction — tudo dentro de uma única `@Transactional`.
+
+### Minha direção de implementação
+
+LOG-008 (idempotência via `UNIQUE(transport_transaction_id)`), LOG-009 (boundary transacional único), LOG-011 (arquitetura). O repositório já tinha um método `findByTruckIdAndBranchIdAndStatus`, mas com um comentário sinalizando que a resolução de "zero ou mais de uma transaction OPEN" era uma assumption ainda não validada.
+
+### Prompt
+
+Continuação do fluxo autônomo.
+
+### Código gerado
+
+Arquivos: `CompleteWeighingUseCase.java`, `TransportTransactionRepository.java` (método trocado), `CompleteWeighingUseCaseTest.java`.
+
+### Minha revisão
+
+- **MODIFIED** — troquei `findByTruckIdAndBranchIdAndStatus` (filtra por branch na query) por `findByTruckIdAndStatus` (sem filtro de branch) + checagem explícita de branch depois, no use case. Motivo: com o método antigo, "sem transaction aberta" e "transaction aberta na filial errada" produziam o mesmo resultado (não encontrado) — e os 2 testes já fixados no scaffold (`ambiguousOpenTransactionMatchThrowsBusinessRuleViolation` e `mismatchedScaleBranchAndTransactionBranchIsRejected`) exigem que sejam distinguíveis.
+- **ACCEPTED** — reusar `NotFoundException`/`BusinessRuleViolationException` + `GlobalExceptionHandler` já existentes, em vez de criar tipos de exceção novos.
+- **ACCEPTED** — pre-check via `existsByTransportTransactionId` para dar erro claro no caso comum, mas mantendo a constraint `UNIQUE` do banco como a garantia real contra uma race de verdade — não tentei substituir uma pela outra.
+
+### Por que
+
+A mudança do método de repositório é a decisão mais significativa desta PR — sem ela, um dos dois testes de contrato já fixados no scaffold seria impossível de satisfazer com sentido (o cenário que ele descreve nunca aconteceria).
+
+### Validação
+
+5 testes com Mockito. CI verde (#19).
+
+---
+
+## CODE-AI-005 — ScaleReadingController (orquestração)
+
+### Problema que eu queria resolver
+
+Ligar todas as peças anteriores no endpoint `POST /api/readings`: buffer de auditoria, sessão + engine, delegar para `CompleteWeighingUseCase` quando `STABLE`.
+
+### Minha direção de implementação
+
+Hot path síncrono (LOG-004), sempre responder 202 rápido — a balança é fire-and-forget.
+
+### Prompt
+
+Continuação do fluxo autônomo.
+
+### Código gerado
+
+Arquivos: `ScaleReadingController.java`, `ScaleReadingControllerTest.java` (novo — não existia stub `@Disabled` para este componente no scaffold original).
+
+### Minha revisão
+
+- **ACCEPTED** — se `CompleteWeighingUseCase.complete()` lançar exceção, capturar, logar em `ERROR`, e mesmo assim devolver 202 — consistente com LOG-018 (sem retry automático nesta versão) e com o comentário original do stub ("sempre retornar 202/204 rápido").
+- **ACCEPTED** — não injetar um `Clock` no hot path só para facilitar teste; usar `System.currentTimeMillis()` direto (mesmo padrão já usado em outras partes do código) e testar o caminho `STABLE` com uma config de thresholds mais rápida em vez de mockar o relógio.
+
+### Por que
+
+Adicionar abstração de `Clock` só para testabilidade, num caminho que roda a cada ~100ms por balança, ia contra o princípio de manter o hot path barato — testei de outro jeito em vez de mudar produção por causa do teste.
+
+### Validação
+
+5 testes (mock só nas duas dependências que precisam de banco: `CompleteWeighingUseCase` e `RawReadingBuffer`; `ScaleSessionManager`/`StabilizationEngine` reais). CI verde (#20).
+
+---
+
+## CODE-AI-006 — Relatórios administrativos (LOG-015)
+
+### Problema que eu queria resolver
+
+Os 4 relatórios MUST já fechados no LOG-015 (Livro de Pesagens, Volume/Custo por Grão, Estoque/Oportunidade de Margem, Desempenho por Filial), ainda como stubs.
+
+### Minha direção de implementação
+
+Contrato de resposta já definido (LOG-015): `{period, filters, data}`. Cálculo de margem no domínio, não em SQL (LOG-013).
+
+### Prompt
+
+Continuação do fluxo autônomo.
+
+### Código gerado
+
+Arquivos: os 4 `*ReportService`, `WeighingRepository` (3 queries JPQL novas), `GrainStockRepository` (1 query nova), 3 records de projeção novos (`GrainTypeCostAggregate`, `BranchCostAggregate`, `GrainStockDetail`), `ReportsIntegrationTest.java` (novo, Testcontainers), `WeighingFlowIntegrationTest.java` (reativado).
+
+### Minha revisão
+
+- **ACCEPTED, estendido** — o princípio "margem calculada no domínio, não em SQL" que eu já tinha fixado no LOG-013 foi aplicado a **toda** razão derivada (custo médio/ton, participação por filial), não só à margem — decisão da IA que aceitei porque é a mesma lógica já validada por mim para outro caso.
+- **ACCEPTED** — `MIN_MARGIN`/`MAX_MARGIN` (5%–20%) como constantes fixas no código, não configuráveis via `application.yml` — diferente dos thresholds de estabilização, esses dois números vêm literalmente do enunciado do desafio, não são uma assumption calibrável.
+- **REJECTED e corrigido depois via CI** — a primeira tentativa de `WeighingFlowIntegrationTest` não checava o status HTTP de cada chamada de setup, e um teste de integração com Testcontainers apresentava um bug real de infraestrutura de teste (container Postgres compartilhado sendo parado entre classes de teste — gotcha conhecido do Testcontainers com container `static` numa superclasse). Corrigi isso pedindo o padrão oficial "singleton container" do Testcontainers em vez de aceitar um retry/wait como paliativo (a primeira tentativa de correção, baseada num diagnóstico errado de "blip transitório", não teria funcionado — o log do CI mostrou que a indisponibilidade durava o teste inteiro, não segundos).
+- **ACCEPTED** — depois de corrigir a infraestrutura de teste, o CI revelou um segundo problema real: o teste criava uma `Branch`/`GrainType` novos mas nunca provisionava a linha `GrainStock` correspondente (não existe endpoint REST para isso — estoque é provisionado fora de banda). Corrigi o teste, não o código de produção, que já se comportava corretamente ao exigir a linha pré-existente.
+
+### Por que
+
+O ciclo de correção via CI (não local — Testcontainers não funcionava no ambiente local desta sessão) é o exemplo mais concreto de "só aceito quando testado de verdade": duas rodadas de bug real encontradas e corrigidas, nenhuma delas visível rodando só os testes unitários.
+
+### Validação
+
+`ReportsIntegrationTest` (4 testes, dataset de 2 filiais/2 grãos calculado à mão) e `WeighingFlowIntegrationTest` (fluxo HTTP completo, cadastro → readings → STABLE → relatório) contra Postgres real via Testcontainers — 4 rodadas de CI até ficar verde, cada uma corrigindo um problema real e distinto. CI verde (#21).
+
+---
+
+## CODE-AI-007 — Deploy do dev environment (Render)
+
+### Problema que eu queria resolver
+
+Com a lógica core pronta, decidir e executar o deploy do dev environment que eu tinha deliberadamente adiado no início ("Implementar a lógica core primeiro, deploy depois").
+
+### Minha direção de implementação
+
+Nenhuma alvo de hospedagem escolhido ainda; só a containerização (Dockerfile/docker-compose) já validada numa fase anterior.
+
+### Prompt
+
+> "ajude a decidir agora (Railway/Render/Fly.io/VM, com trade-offs de cada um" — pedi uma comparação explícita antes de decidir, não uma escolha pronta da IA.
+
+Depois, já com o `render.yaml` escrito mas não testado (sem acesso a conta Render na sessão anterior): "I'm logged into render via the cli, auxiliate on deployment and test".
+
+### Código gerado
+
+Arquivos: `render.yaml`, `application-render.yml` (novo profile Spring), `application.yml` (`server.port` mudou de fixo para `${PORT:8080}`), seção "Deploy" no `README.md`.
+
+### Minha revisão
+
+- **ACCEPTED** — Render entre as 4 opções apresentadas (Railway, Fly.io, VM), depois de comparar trade-offs reais: free tier sem cartão, reaproveita o `Dockerfile` que já existia, Postgres gerenciado no mesmo Blueprint. Decisão minha, não a mais "impressionante" tecnicamente (uma VM seria mais parecida com produção) — a mais adequada ao prazo real até a entrevista.
+- **ACCEPTED** — `application-render.yml` interpolando a URL JDBC a partir de `PGHOST`/`PGPORT`/`PGDATABASE` em vez de usar a connection string pronta do Render — o Render Blueprint só expõe propriedades separadas, e a IA validou isso contra a API real (`render blueprints validate`) antes de eu criar qualquer recurso de verdade.
+- **ACCEPTED** — deploy feito via `render` CLI (Postgres + web service criados diretamente, sem precisar do dashboard) depois que percebi que a CLI já estava autenticada — mudança de plano em relação ao README original (que só descrevia passos manuais no dashboard, escritos numa sessão sem acesso à minha conta).
+- **Validação que eu exigi antes de aceitar como "pronto"**: não bastou o deploy subir — pedi teste manual do fluxo completo contra a instância real (leituras até `STABLE`, transaction completando, os 4 relatórios com valores conferidos à mão), porque um deploy que só "sobe" sem processar nada de verdade não prova nada.
+
+### Por que
+
+Documentar a decisão do alvo de deploy era importante para mim porque é uma decisão de produto/custo, não só técnica — não queria que a IA escolhesse sozinha algo que eu teria que sustentar/pagar depois.
+
+### Validação
+
+`render blueprints validate` (schema correto antes de criar qualquer recurso); deploy real via CLI; teste manual completo contra `https://grainweighing.onrender.com` — cadastro, readings até STABLE, transaction COMPLETED, 4 relatórios com valores corretos (net=23000kg, cost=R$41.400, margem=13,55%); logs de deploy conferidos (migrations aplicadas, porta correta, sem warnings).
 
 ---
 
