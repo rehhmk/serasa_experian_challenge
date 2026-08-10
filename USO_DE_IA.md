@@ -643,7 +643,7 @@ Justificativa técnica.
 
 A partir daqui a IA (Claude Code) deixou de ser só interlocutor de design (seções 3 e AI-001–AI-009) e passou a implementar diretamente — sempre em modo agente, nunca copiando/colando de um chat. Meu papel nessa fase mudou de forma, não desapareceu: para cada componente eu (1) exigi um plano por escrito antes de qualquer código — arquivos, desenho, testes, dúvidas em aberto — conforme o protocolo que eu mesmo defini no `CLAUDE.md` seção 24; (2) fui interrompido explicitamente sempre que a IA encontrou uma decisão de engenharia ou de produto não coberta pelos LOGs existentes, e decidi cada uma dessas vezes via pergunta direta, não a IA sozinha; (3) só aceitei um componente como pronto depois de `mvn clean verify` e, nos casos de integração (Postgres real via Testcontainers, deploy), validação contra infraestrutura real, não só teste unitário.
 
-Os 7 registros abaixo cobrem os componentes que faltavam do MVP (`StabilizationEngine` → relatórios) e o deploy do dev environment — nessa ordem, PRs #16 a #24 do repositório.
+Os 8 registros abaixo cobrem os componentes que faltavam do MVP (`StabilizationEngine` → relatórios), o deploy do dev environment, e uma revisão final pré-entrevista — nessa ordem, PRs #16 a #24 do repositório mais a revisão registrada em LOG-019.
 
 ## CODE-AI-001 — StabilizationEngine (LOG-007)
 
@@ -887,6 +887,41 @@ Documentar a decisão do alvo de deploy era importante para mim porque é uma de
 ### Validação
 
 `render blueprints validate` (schema correto antes de criar qualquer recurso); deploy real via CLI; teste manual completo contra `https://grainweighing.onrender.com` — cadastro, readings até STABLE, transaction COMPLETED, 4 relatórios com valores corretos (net=23000kg, cost=R$41.400, margem=13,55%); logs de deploy conferidos (migrations aplicadas, porta correta, sem warnings).
+
+---
+
+## CODE-AI-008 — Correções cirúrgicas pré-entrevista: lost update e gross ≤ tare (LOG-019)
+
+### Problema que eu queria resolver
+
+Numa revisão final antes da entrevista, dois riscos de consistência reais no caminho de finalização: `GrainStockService.increaseAvailableQuantity` fazia read-modify-write via entidade gerenciada (lost update possível entre duas balanças da mesma filial/grão finalizando quase ao mesmo tempo), e `CompleteWeighingUseCase` não rejeitava `grossWeight <= tareWeight` antes de persistir.
+
+### Minha direção de implementação
+
+Já cheguei com o diagnóstico e a correção esperada definidos (documentei em LOG-019 antes de pedir código): trocar o incremento por `UPDATE` atômico no Postgres, e adicionar uma guarda de `BusinessRuleViolationException` antes de qualquer persistência quando `grossWeight <= tareWeight`.
+
+### Prompt
+
+Plano escrito por mim, cobrindo os dois riscos concretos, o resultado esperado de cada correção, e o que deveria continuar documentado como limitação (retry, buffer de raw_readings, autenticação de relatórios) em vez de "resolvido" nesta rodada.
+
+### Código gerado
+
+Arquivos: `GrainStockRepository.java` (`@Modifying @Query` com `UPDATE ... SET x = x + :delta`), `GrainStockService.java` (usa o retorno de linhas afetadas em vez de reler a entidade), `GrainStock.java` (removido `increase()`, sem uso depois da mudança), `CompleteWeighingUseCase.java` (guarda de gross/tare), `CompleteWeighingUseCaseTest.java` (novo teste), `GrainStockConcurrencyIntegrationTest.java` (novo, Testcontainers), `LOG_DECISOES_TECNICAS.md` (LOG-019), `BLUEPRINT.md` (seções 2, 3, 6, 9, 10 novo).
+
+### Minha revisão
+
+- **ACCEPTED** — antes de qualquer edição, pedi para a IA confirmar os dois problemas lendo o código atual linha a linha (não assumir a partir da minha descrição) — ela apontou exatamente `GrainStockService.java:21-26` e a ausência de checagem em `CompleteWeighingUseCase.java:74-88`, batendo com o que eu já tinha identificado.
+- **ACCEPTED** — remover `GrainStock.increase()` em vez de deixar como código morto — a IA perguntou se havia outro caller antes de remover (não havia).
+- **ACCEPTED** — teste de concorrência via `TransactionTemplate` manual (simulando duas chamadas HTTP concorrentes, cada uma com sua própria transação curta) em vez de anotar o método do repositório com `@Transactional` — isso teria violado a regra que eu mesmo escrevi no CLAUDE.md §12 (só a finalização de negócio abre transaction).
+- **MODIFIED (processo, não código)** — a IA encontrou uma incompatibilidade real entre `Testcontainers 1.20.1` (fixado no `pom.xml`) e a versão do Docker Desktop instalada nesta máquina, que impedia validar a suíte de integração completa. Em vez de contornar silenciosamente (ex: fazer bump de versão major sem eu decidir), ela apresentou o diagnóstico (log de estratégias do Testcontainers, erro HTTP 400 na negociação com o daemon) e propôs alternativas; eu decidi não fazer o bump de versão agora — fora de escopo pra véspera de entrevista — e aceitei a prova alternativa (concorrência real via `psql` direto contra o Postgres do `docker-compose`) como evidência suficiente de que o mecanismo de `UPDATE` atômico funciona, complementando os testes unitários (que rodaram limpos sob JDK 17).
+
+### Por que
+
+Essas duas correções são exatamente o tipo de bug que uma revisão de consistência tem que pegar antes de uma entrevista técnica que avalia justamente concorrência e correção de dados — silenciar ou não testar teria sido pior do que documentar a limitação de ambiente que impediu a validação mais forte (Testcontainers) e compensar com uma prova direta no banco.
+
+### Validação
+
+`CompleteWeighingUseCaseTest` (6 testes, incluindo o novo `grossWeightNotGreaterThanTareWeightIsRejected`) e os outros 3 arquivos de teste unitário — 41 testes, `mvn test` verde sob JDK 17. `GrainStockConcurrencyIntegrationTest` escrito e correto por revisão de código, mas não executado nesta máquina (Testcontainers/Docker incompatível — ver acima); prova equivalente feita com 20 processos `psql` concorrentes contra o Postgres real do `docker-compose` (1000 → 1200 exato, sem perda). Pendência explícita: confirmar `GrainStockConcurrencyIntegrationTest` verde em CI ou numa máquina com Testcontainers/Docker compatíveis antes de considerar o teste definitivamente validado em execução, não só em leitura.
 
 ---
 

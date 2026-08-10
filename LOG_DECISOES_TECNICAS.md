@@ -510,7 +510,7 @@ verifica critérios de estabilidade
     ↓
 exige estabilidade contínua por um intervalo mínimo
     ↓
-calcula peso final (média ou trimmed mean)
+calcula peso final (média das amostras limpas)
     ↓
 arredonda pela resolução da balança
     ↓
@@ -564,7 +564,7 @@ COLLECTING -> STABILIZING -> STABLE -> SAVE
 finalWeight = round(mean(cleanSamples) / resolution) × resolution
 ```
 
-Uso a média (ou trimmed mean) das amostras limpas da janela estável — nunca a última leitura isolada. O arredondamento pela resolução real da balança (ex: 20 kg) evita apresentar precisão que o hardware não tem.
+Uso a média das amostras limpas da janela estável — nunca a última leitura isolada, nem trimmed mean (avaliei e descartei: com a remoção de outlier por mediana+MAD já feita antes, um corte adicional nas pontas da amostra restante não teria efeito prático e só adicionaria um parâmetro a mais para calibrar). O arredondamento pela resolução real da balança (ex: 20 kg) evita apresentar precisão que o hardware não tem.
 
 ## Por que não Kalman Filter no MVP
 
@@ -1211,6 +1211,41 @@ Ao implementar `ScaleReadingController`/`CompleteWeighingUseCase`: decidir se co
 ## Como usei IA
 
 Encontrado durante revisão de design assistida por IA de `ScaleSession.addReading()` — pedi para a IA rastrear o que acontece se o consumidor de `WeightResult(stable=true)` falhar depois, antes de eu escrever o código.
+
+---
+
+# LOG-019 — Correções cirúrgicas pré-entrevista: lost update em GrainStock e gross ≤ tare
+
+## Problema que identifiquei
+
+Numa revisão final do `CompleteWeighingUseCase`/`GrainStockService` antes da entrevista, encontrei dois riscos de consistência reais, não hipotéticos:
+
+1. **Lost update em `GrainStock`.** `GrainStockService.increaseAvailableQuantity` fazia read-modify-write via entidade gerenciada (`repository.findByBranchIdAndGrainTypeId(...)` + `stock.increase(delta)`, confiando em dirty checking). Como a concorrência é isolada por balança (LOG-005), duas balanças de filiais diferentes nunca colidem — mas duas balanças **da mesma filial**, pesando o **mesmo tipo de grão**, ao finalizar quase ao mesmo tempo, cada uma roda sua própria transação curta (LOG-009) e lê o mesmo valor inicial de `available_quantity_kg`. A transação que comitar por último sobrescreve com um valor calculado a partir de um SELECT já stale — o incremento da primeira transação é perdido. Não é um cenário exótico: é exatamente o caso de duas balanças na mesma filial recebendo soja ao mesmo tempo.
+2. **Sem guarda contra `grossWeight <= tareWeight`.** Nada impedia `netWeightKg` de sair zero ou negativo (tara cadastrada errada, ou — mais realista no MVP sem fila durável — uma `Weighing` de teste/replay contra um truck com tara alta). O código seguia até persistir `Weighing`, somar ao estoque e completar a `TransportTransaction` com números de negócio sem sentido.
+
+## Minha decisão
+
+1. Trocar o incremento de estoque por um `UPDATE` atômico no Postgres (`SET available_quantity_kg = available_quantity_kg + :delta`), via `@Modifying @Query` em `GrainStockRepository`. O incremento relativo acontece inteiramente no banco — a segunda transação, ao aplicar seu próprio delta, sempre parte do valor já commitado pela primeira (Postgres serializa `UPDATE`s concorrentes na mesma linha via lock de linha), não de um valor lido antes. `GrainStock.increase()` (a entidade) foi removida por ficar sem uso — não deixei um método morto no domínio.
+2. Rejeitar a finalização com `BusinessRuleViolationException` quando `grossWeightKg <= tareWeightKg`, antes de qualquer persistência — nem `Weighing`, nem estoque, nem `TransportTransaction.complete()`.
+
+## Trade-off aceito
+
+O `UPDATE` atômico move a aritmética do domínio Java para SQL — perco um pouco de expressividade no código Java (não vejo mais o `+` no `GrainStock.java`), mas ganho a garantia real sem precisar de lock explícito (`SELECT ... FOR UPDATE`) nem de subir o nível de isolamento da transação. Considerei `SELECT ... FOR UPDATE` como alternativa — teria o mesmo efeito prático, mas mantém o read-modify-write em duas viagens ao banco em vez de uma, sem ganho compensador para este caso.
+
+## Validação
+
+- `CompleteWeighingUseCaseTest.grossWeightNotGreaterThanTareWeightIsRejected` (unitário, Mockito) — gross == tare rejeitado, `Weighing`/`GrainStockService` nunca chamados.
+- `GrainStockConcurrencyIntegrationTest.concurrentIncrementsOfTheSameStockRowAreNotLost` (Testcontainers/Postgres real) — 20 transações concorrentes, cada uma abrindo/commitando sozinha via `TransactionTemplate` (simulando 20 `CompleteWeighingUseCase.complete()` paralelos), incrementando o mesmo par branch/grainType; valor final = inicial + soma exata dos 20 deltas.
+- Prova adicional fora da suíte de testes: 20 processos `psql` concorrentes rodando o mesmo `UPDATE ... SET qty = qty + 10` contra uma tabela de prova no Postgres do `docker-compose` local (`1000` inicial → `1200` final, exato) — usada porque a suíte de integração via Testcontainers não rodou nesta máquina (ver nota abaixo), e eu queria confirmar o mecanismo de banco isoladamente antes de aceitar a correção.
+- `mvn clean verify` **não pôde ser validado ponta a ponta nesta máquina**: `Testcontainers 1.20.1` (versão fixada no `pom.xml`) não negocia a API do Docker Engine da versão atual do Docker Desktop instalado aqui (erro `BadRequestException Status 400` nas estratégias `UnixSocketClientProviderStrategy`/`DockerDesktopClientProviderStrategy`, confirmado via log de debug do Testcontainers — não é falha de código, é incompatibilidade de versão de ferramenta). Os 41 testes unitários (incluindo os 2 novos) passam limpos sob JDK 17. Ficou como pendência checar se o CI (que já roda verde, badge no README) usa uma combinação Docker/Testcontainers compatível, e considerar — como decisão separada, não urgente — subir `testcontainers.version` para a linha atual do projeto (hoje major 2.x) quando houver tempo para validar a migração sem pressa de véspera de entrevista.
+
+## Trigger para revisitar
+
+Se o número de balanças por filial pesando o mesmo tipo de grão crescer a ponto do lock de linha do `UPDATE` virar contenção real (não há evidência disso hoje) — nesse caso, avaliar particionar o estoque por balança com reconciliação periódica, não antes.
+
+## Como usei IA
+
+Direção veio de um plano escrito por mim (revisão final pré-entrevista) apontando os dois riscos concretos e a correção esperada para cada um. Pedi para a IA (Claude Code) primeiro confirmar os dois problemas lendo o código atual antes de mexer em qualquer arquivo — só depois de eu ver a confirmação linha a linha é que autorizei a implementação. A IA também encontrou, por conta própria, a incompatibilidade Testcontainers/Docker Desktop ao tentar validar; me apresentou o diagnóstico (log de estratégias do `DockerClientProviderStrategy`) em vez de silenciosamente pular a validação ou mascarar o problema, e eu decidi não fazer o bump de versão major do Testcontainers agora — fora de escopo para a véspera.
 
 ---
 

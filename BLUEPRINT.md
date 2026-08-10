@@ -25,7 +25,7 @@ mesmo tempo) numa única pesagem de negócio confiável.
 ```text
 ESP32 (fire-and-forget)
     ↓
-HTTP POST /readings  { id, plate, weight }
+HTTP POST /api/readings  { id, plate, weight }
     ↓
 Auth filter (X-Scale-Key)                              [LOG-014]
     ↓ inválido → 401, fim
@@ -45,9 +45,10 @@ Stabilization Engine                                     [LOG-007]
     └─ STABLE
         ↓
         CompleteWeighingUseCase  (@Transactional)         [LOG-009]
+            rejeita se grossWeight <= tareWeight            [LOG-019]
             cria Weighing
             calcula net weight e custo
-            atualiza GrainStock
+            atualiza GrainStock (UPDATE atômico)             [LOG-019]
             completa TransportTransaction
             UNIQUE(transport_transaction_id)               [LOG-008]
         ↓
@@ -56,7 +57,8 @@ Stabilization Engine                                     [LOG-007]
     Reset da ScaleSession (peso cai a zero, ou troca      [LOG-016]
     de placa mid-window → descarta janela e reinicia)
 
-(fora do hot path, assíncrono/bufferizado)
+(fora do hot path, bufferizado com flush síncrono por lote — não é uma fila
+assíncrona; ver "Limitações conhecidas", seção 10)
 raw_readings — toda leitura, para auditoria e recálculo   [LOG-006, revisado]
 ```
 
@@ -92,12 +94,13 @@ Weighing
 GrainStock                          [LOG-010]
 - branchId
 - grainTypeId
-- availableQuantityKg               (base para a margem — LOG-013)
+- availableQuantityKg               (base para a margem — LOG-013; incremento via
+                                      UPDATE atômico no banco, não read-modify-write — LOG-019)
 ```
 
 ```text
 raw_readings                        [LOG-006, revisado]
-- scaleId, timestamp, weightKg, deviceId, plate
+- scaleId, timestamp, weightKg, plate
 ```
 
 ## 4. Core algorithm (resumo)
@@ -108,8 +111,8 @@ raw_readings                        [LOG-006, revisado]
    balança, que range/stdDev sozinhos não pegam.
 3. Confirma estabilidade por um tempo mínimo (`STABILITY_DURATION`) antes de
    aceitar — máquina de estados `COLLECTING → STABILIZING → STABLE`.
-4. Peso final = média (ou trimmed mean) das amostras limpas, arredondado pela
-   resolução real da balança.
+4. Peso final = média das amostras limpas, arredondado pela resolução real da
+   balança.
 
 Kalman Filter foi avaliado e descartado como algoritmo principal do MVP: ele
 suaviza sinal, mas não decide sozinho se o caminhão ainda está entrando —
@@ -144,10 +147,22 @@ explícito do enunciado):
 | Estoque e Oportunidade de Margem | responde "identificar oportunidades de lucro" | `GET /api/reports/inventory-opportunities` |
 | Desempenho por Filial | enunciado é explícito em múltiplas filiais | `GET /api/reports/branches/performance` |
 
-Contrato uniforme: `{ period: {from, to}, filters: {...}, data: [...] }`.
+Contrato uniforme: `{ period: {from, to}, filters: {...}, data: [...] }`, com
+duas exceções documentadas:
+
+- `inventory-opportunities` não recebe filtro de período (estoque é sempre a
+  posição atual, não um agregado por intervalo) — `period` vem `null` na
+  resposta, não um `{from, to}` vazio. É snapshot por definição, não um bug.
+- Livro de Pesagens (`/weighings`) é paginado (`page`, `size`), mas a resposta
+  não inclui contagem total nem `hasNext` — só a página pedida. Suficiente
+  para o MVP (consumo manual/CLI), insuficiente para um componente de UI de
+  paginação real; ver seção "Limitações conhecidas" abaixo.
+
 Endpoint de detalhe (Livro de Pesagens) exige paginação; agregados não.
 `plate` não é exposta em nenhum relatório agregado nem no dashboard — só no
-Livro de Pesagens, para papel autorizado (LGPD, princípio da necessidade).
+Livro de Pesagens, para papel autorizado (LGPD, princípio da necessidade) —
+**"papel autorizado" aqui é uma intenção de design, não um controle de acesso
+implementado; ver seção "Limitações conhecidas" abaixo.**
 
 Adiado para depois dos 4 MUST + testes do core: Saúde das Balanças,
 Transações Pendentes. Documentado mas não implementado nesta fase (depende
@@ -185,10 +200,26 @@ de cada sugestão: `USO_DE_IA.md`.
 |---|---|---|---|
 | 1 | Cadastros | LOG-001 | ✅ |
 | 2 | Recepção HTTP, balanças concorrentes | LOG-002, 004, 005 | ✅ |
-| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016 | ✅ implementado e testado (PRs #16, #17, #19) |
+| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016, 019 | ✅ implementado e testado (PRs #16, #17, #19; correções LOG-019) |
 | 4 | Relatórios/Estatísticas | LOG-015, seção 6 | ✅ 4 MUST implementados e testados (PR #21); SHOULD/COULD documentados como roadmap |
 | 5a | Arquitetura/desenho | LOG-002, 004, 011 + este blueprint | ✅ |
 | 5b | Autenticação das balanças | LOG-014 | ✅ implementado e testado (PR #18) |
-| 5c | Retentativa e idempotência | LOG-008, 016 | ✅ implementado e testado (PRs #17, #19) |
+| 5c-i | Idempotência (no máximo 1 Weighing por TransportTransaction) | LOG-008, 016 | ✅ implementado e testado (PRs #17, #19) |
+| 5c-ii | Retentativa automática após falha | LOG-018 | ❌ não implementado — trade-off documentado do MVP, não confundir com 5c-i. Ver "Limitações conhecidas" |
 | 5d | Sugestão de expansão | seção 7 | ✅ |
-| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008, CODE-AI-001 a 007 | ✅ |
+| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008, CODE-AI-001 a 008 | ✅ |
+
+## 10. Limitações conhecidas e evolução para produção
+
+Trade-offs deliberados do MVP, para não surpreender ninguém durante a
+entrevista — cada um já tem decisão registrada, nenhum é omissão silenciosa:
+
+| Limitação | Onde documentado | Evolução (ver seção 7 e roteiro incremental) |
+|---|---|---|
+| Sem retry automático se a persistência falhar depois de `STABLE` | LOG-018 | Não transicionar `STABLE` como definitivo até a persistência confirmar, ou política de retry explícita no controller |
+| `raw_readings` é bufferizado em memória (`ConcurrentLinkedQueue`) e flusha em lote síncrono ao atingir `flush-batch-size`; o lote residual (< batch size) em memória no momento de um crash/kill abrupto é perdido | LOG-006 (revisado) | Fila durável (ver seção 7) removeria essa janela de perda; fora de escopo sem evidência de que o volume de auditoria justifique |
+| Relatórios administrativos (`/api/reports/*`) não têm autenticação nem controle de papel — qualquer request sem credencial acessa, incluindo o Livro de Pesagens com `plate` | Seção 6 (nota LGPD é intenção de design, não controle implementado) | Spring Security + papel administrativo dedicado; não adicionado no MVP para não introduzir stack nova sem aprovação (CLAUDE.md §19) |
+| API key das balanças é estática por balança (LOG-014) — sem rotação automática, sem HMAC/mTLS | LOG-014 | Rotação de chave e/ou HMAC assinado quando houver evidência real de fraude/tampering (seção 7) |
+| `/api/reports/weighings` pagina mas não retorna total de itens nem `hasNext` | Seção 6 | Adicionar `Page` completo (`totalElements`) se um consumidor de UI real precisar construir paginação, não apenas navegação sequencial |
+| `/api/reports/inventory-opportunities` é sempre a posição atual de estoque — não aceita filtro de período, retorna `period: null` | Seção 6 | Não é limitação a resolver — estoque não é um agregado por intervalo; documentado para não ser lido como bug |
+| O sandbox (`frontend/`) prevê estabilização **localmente**, no navegador, com os mesmos thresholds do `StabilizationEngine` — essa previsão nunca é a confirmação de que o backend persistiu a `Weighing`; a UI consulta o Livro de Pesagens (`GET /api/reports/weighings`) para confirmar | `frontend/README.md`, `frontend/src/simulation/stabilizationPredictor.ts` | N/A — distinção deliberada, mantida visualmente explícita na UI |

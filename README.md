@@ -30,7 +30,7 @@ que preciso.
 
 > **Por que decidi assim?**
 
-Log cronológico de cada decisão técnica relevante (`LOG-001` a `LOG-016`),
+Log cronológico de cada decisão técnica relevante (`LOG-001` a `LOG-019`),
 incluindo hipótese inicial, alternativas comparadas, revisões que fiz ao
 longo do processo, e o critério usado para decidir. Inclui os pontos em que
 rejeitei uma sugestão de IA (ex: Kalman Filter como algoritmo principal de
@@ -46,7 +46,7 @@ viu resumido no `BLUEPRINT.md` — cada seção do blueprint referencia o
 
 Descreve o papel da IA no processo (design review, adversarial review,
 exploração de alternativas, revisão de escopo, assistência de
-implementação), com prompts reais utilizados (seção 3, `AI-001` a `AI-008`)
+implementação), com prompts reais utilizados (seção 3, `AI-001` a `AI-009`)
 e a classificação de cada sugestão recebida (`ACCEPTED` / `MODIFIED` /
 `DEFERRED` / `REJECTED`, seção 5). A seção 6-7 define o template para
 registrar código gerado por IA à medida que a implementação avançar.
@@ -73,9 +73,17 @@ Estoque/Oportunidade de Margem, Desempenho por Filial). Fluxo completo
 integração com Postgres real (Testcontainers).
 
 Sem itens em aberto no checklist MUST. Registro de código gerado por IA
-(`USO_DE_IA.md`, seção 7, `CODE-AI-001` a `007`) e ambiente de deploy externo
+(`USO_DE_IA.md`, seção 7, `CODE-AI-001` a `008`) e ambiente de deploy externo
 (seção "Deploy" abaixo) — ambos fechados. SHOULD/COULD continuam documentados
 como roadmap (seção 7 do `BLUEPRINT.md`), não como pendência.
+
+Revisão final pré-entrevista (`LOG-019`) corrigiu dois riscos de consistência
+reais — lost update no incremento de `GrainStock` (agora `UPDATE` atômico) e
+ausência de guarda contra `grossWeight <= tareWeight` na finalização — e
+alinhou a documentação ao comportamento real do código (endpoint, algoritmo
+de peso final, contrato dos relatórios). Limitações conhecidas do MVP
+(retentativa automática, buffer de `raw_readings`, autenticação dos
+relatórios administrativos) estão listadas na seção 10 do `BLUEPRINT.md`.
 
 ## Stack
 
