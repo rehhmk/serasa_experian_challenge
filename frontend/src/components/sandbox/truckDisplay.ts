@@ -51,3 +51,38 @@ export function describeTruckDisplay(snapshot: SnapshotFrom<typeof truckMachine>
   }
   return { label: 'Na fila', tone: 'neutral', roadPercent: 0 }
 }
+
+export interface WeighingResultDisplay {
+  /** 'confirmed' só depois que o Livro de Pesagens (API real) devolveu a Weighing — nunca a predição local sozinha. */
+  kind: 'predicted' | 'confirmed'
+  grossWeightKg: number
+  tareWeightKg: number
+  netWeightKg: number
+  cost: number | null
+}
+
+// Módulo puro, mesmo motivo de describeTruckDisplay acima: separa "o que a UI
+// prevê localmente" (predictor, mesmos thresholds do StabilizationEngine, mas
+// nunca persistido) de "o que a API confirmou" (confirmedWeighing, vindo de
+// GET /api/reports/weighings) — a UI nunca deve tratar um como o outro.
+export function describeWeighingResult(snapshot: SnapshotFrom<typeof truckMachine>): WeighingResultDisplay {
+  const { predictor, confirmedWeighing, tareWeightKg } = snapshot.context
+
+  if (confirmedWeighing) {
+    return {
+      kind: 'confirmed',
+      grossWeightKg: confirmedWeighing.grossWeightKg,
+      tareWeightKg: confirmedWeighing.tareWeightKg,
+      netWeightKg: confirmedWeighing.netWeightKg,
+      cost: confirmedWeighing.cost,
+    }
+  }
+
+  return {
+    kind: 'predicted',
+    grossWeightKg: predictor.weightKg,
+    tareWeightKg,
+    netWeightKg: predictor.weightKg - tareWeightKg,
+    cost: null,
+  }
+}

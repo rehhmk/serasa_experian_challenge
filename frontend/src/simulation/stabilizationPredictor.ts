@@ -12,6 +12,12 @@ export interface PredictionResult {
   samplesUsed: number
   /** kg/s sobre a janela limpa — 0 quando não há amostras suficientes pra calcular. */
   slope: number
+  /** max - min sobre a base usada (amostras limpas quando há; a janela crua caso contrário). */
+  range: number
+  /** clean.length / n — 1 quando a remoção de outlier ainda não rodou (poucas amostras). */
+  validRatio: number
+  /** n - clean.length — quantas amostras a mediana+MAD descartou desta janela. */
+  outliersRemoved: number
 }
 
 /**
@@ -41,6 +47,9 @@ export function predictWeighing(
       standardDeviation: populationStdDev(window, rawMean),
       samplesUsed: n,
       slope: computeSlope(window),
+      range: rangeOf(window),
+      validRatio: 1,
+      outliersRemoved: 0,
     }
   }
 
@@ -51,6 +60,7 @@ export function predictWeighing(
 
   const clean = window.filter((s) => Math.abs(s.weightKg - median) <= threshold)
   const validRatio = clean.length / n
+  const outliersRemoved = n - clean.length
 
   if (clean.length === 0 || validRatio < config.minValidRatio) {
     const basis = clean.length === 0 ? window : clean
@@ -61,12 +71,14 @@ export function predictWeighing(
       standardDeviation: populationStdDev(basis, basisMean),
       samplesUsed: clean.length,
       slope: computeSlope(basis),
+      range: rangeOf(basis),
+      validRatio,
+      outliersRemoved,
     }
   }
 
   const cleanMean = mean(clean)
-  const cleanWeights = clean.map((s) => s.weightKg)
-  const range = Math.max(...cleanWeights) - Math.min(...cleanWeights)
+  const range = rangeOf(clean)
   const stdDev = populationStdDev(clean, cleanMean)
   const slope = computeSlope(clean)
 
@@ -79,6 +91,9 @@ export function predictWeighing(
     standardDeviation: stdDev,
     samplesUsed: clean.length,
     slope,
+    range,
+    validRatio,
+    outliersRemoved,
   }
 }
 
@@ -91,6 +106,11 @@ export interface PredictorState {
   standardDeviation: number
   samplesUsed: number
   slope: number
+  range: number
+  validRatio: number
+  outliersRemoved: number
+  /** nowMs - stabilizingSinceMs enquanto STABILIZING/STABLE; 0 em COLLECTING. */
+  stabilizingForMs: number
 }
 
 export const INITIAL_PREDICTOR_STATE: PredictorState = {
@@ -100,6 +120,10 @@ export const INITIAL_PREDICTOR_STATE: PredictorState = {
   standardDeviation: 0,
   samplesUsed: 0,
   slope: 0,
+  range: 0,
+  validRatio: 0,
+  outliersRemoved: 0,
+  stabilizingForMs: 0,
 }
 
 /**
@@ -124,6 +148,10 @@ export function advancePredictor(
       standardDeviation: candidate.standardDeviation,
       samplesUsed: candidate.samplesUsed,
       slope: candidate.slope,
+      range: candidate.range,
+      validRatio: candidate.validRatio,
+      outliersRemoved: candidate.outliersRemoved,
+      stabilizingForMs: 0,
     }
   }
 
@@ -135,6 +163,10 @@ export function advancePredictor(
       standardDeviation: candidate.standardDeviation,
       samplesUsed: candidate.samplesUsed,
       slope: candidate.slope,
+      range: candidate.range,
+      validRatio: candidate.validRatio,
+      outliersRemoved: candidate.outliersRemoved,
+      stabilizingForMs: 0,
     }
   }
 
@@ -147,6 +179,10 @@ export function advancePredictor(
     standardDeviation: candidate.standardDeviation,
     samplesUsed: candidate.samplesUsed,
     slope: candidate.slope,
+    range: candidate.range,
+    validRatio: candidate.validRatio,
+    outliersRemoved: candidate.outliersRemoved,
+    stabilizingForMs: stableForMs,
   }
 }
 
@@ -157,6 +193,11 @@ function mean(samples: WeightSample[]): number {
 function populationStdDev(samples: WeightSample[], meanValue: number): number {
   const sumSquares = samples.reduce((sum, s) => sum + (s.weightKg - meanValue) ** 2, 0)
   return Math.sqrt(sumSquares / samples.length)
+}
+
+function rangeOf(samples: WeightSample[]): number {
+  const weights = samples.map((s) => s.weightKg)
+  return Math.max(...weights) - Math.min(...weights)
 }
 
 function medianOf(sortedValues: number[]): number {

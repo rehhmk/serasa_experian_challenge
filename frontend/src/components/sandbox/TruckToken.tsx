@@ -3,7 +3,7 @@ import type { ActorRefFrom } from 'xstate'
 import type { truckMachine } from '../../machines/truckMachine'
 import { StabilityBadge } from './StabilityBadge'
 import { TelemetryReadout } from './TelemetryReadout'
-import { describeTruckDisplay } from './truckDisplay'
+import { describeTruckDisplay, describeWeighingResult } from './truckDisplay'
 
 interface TruckTokenProps {
   actorRef: ActorRefFrom<typeof truckMachine>
@@ -15,9 +15,10 @@ interface TruckTokenProps {
 // — Lane é quem decide qual ator passar aqui.
 export function TruckToken({ actorRef }: TruckTokenProps) {
   const snapshot = useSelector(actorRef, (s) => s)
-  const { plate, profile, predictor, confirmedWeighing } = snapshot.context
+  const { plate, profile, predictor } = snapshot.context
   const { label, tone, roadPercent } = describeTruckDisplay(snapshot)
-  const weightTons = (confirmedWeighing?.netWeightKg ?? predictor.weightKg) / 1000
+  const result = describeWeighingResult(snapshot)
+  const netWeightTons = result.netWeightKg / 1000
 
   return (
     <div className="truck-token">
@@ -35,13 +36,17 @@ export function TruckToken({ actorRef }: TruckTokenProps) {
 
       <div className="truck-token-footer">
         <span className="truck-plate">{plate}</span>
-        <span className="truck-weight">{weightTons.toFixed(2)} t</span>
+        <span className={`truck-weight truck-weight--${result.kind}`}>
+          {netWeightTons.toFixed(2)} t
+          <span className="truck-weight-kind">{result.kind === 'predicted' ? 'predito' : 'confirmado'}</span>
+        </span>
       </div>
 
       <TelemetryReadout
         samplesUsed={predictor.samplesUsed}
         standardDeviationG={predictor.standardDeviation * 1000}
         slopeKgPerSec={predictor.slope}
+        rangeKg={predictor.range}
       />
     </div>
   )

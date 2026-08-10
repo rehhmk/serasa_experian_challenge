@@ -5,7 +5,7 @@ import { openTransportTransaction } from '../../api/transportTransactions'
 import { getWeighingBook } from '../../api/reports'
 import type { TransportTransaction, WeighingBookItem } from '../../api/types'
 import type { WeightSample } from '../../simulation/stabilizationPredictor'
-import { describeTruckDisplay } from './truckDisplay'
+import { describeTruckDisplay, describeWeighingResult } from './truckDisplay'
 
 vi.mock('../../api/readings', () => ({ postReading: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../../api/transportTransactions', () => ({ openTransportTransaction: vi.fn() }))
@@ -145,5 +145,47 @@ describe('describeTruckDisplay', () => {
     expect(display.label).toBe('Saindo')
     expect(display.roadPercent).toBeGreaterThan(50)
     parent.stop()
+  })
+})
+
+describe('describeWeighingResult', () => {
+  it('antes da confirmação, é "predicted" — net vem do predictor local, cost é null', async () => {
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    for (const sample of stableReadingSequence(20)) {
+      actor.send({ type: 'RAW_READING', sample })
+    }
+
+    const result = describeWeighingResult(actor.getSnapshot())
+    expect(result.kind).toBe('predicted')
+    expect(result.tareWeightKg).toBe(TEST_INPUT.tareWeightKg)
+    expect(result.grossWeightKg).toBeCloseTo(5000, 3)
+    expect(result.netWeightKg).toBeCloseTo(5000 - TEST_INPUT.tareWeightKg, 3)
+    expect(result.cost).toBeNull()
+    actor.stop()
+  })
+
+  it('depois de "recorded", é "confirmed" — os 4 valores vêm do Livro de Pesagens, não do predictor', async () => {
+    vi.mocked(getWeighingBook).mockResolvedValue({ period: null, filters: {}, data: [CONFIRMED_WEIGHING] })
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+    for (const sample of stableReadingSequence(26)) {
+      actor.send({ type: 'RAW_READING', sample })
+    }
+    await vi.advanceTimersByTimeAsync(0)
+
+    const result = describeWeighingResult(actor.getSnapshot())
+    expect(result).toEqual({
+      kind: 'confirmed',
+      grossWeightKg: CONFIRMED_WEIGHING.grossWeightKg,
+      tareWeightKg: CONFIRMED_WEIGHING.tareWeightKg,
+      netWeightKg: CONFIRMED_WEIGHING.netWeightKg,
+      cost: CONFIRMED_WEIGHING.cost,
+    })
+    actor.stop()
   })
 })

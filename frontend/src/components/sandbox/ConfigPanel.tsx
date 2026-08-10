@@ -4,9 +4,9 @@ import { YardActorContext } from './yardActorContext'
 
 const AVAILABLE_PROFILES: { value: TruckProfileName; label: string }[] = [
   { value: 'normal', label: 'Normal' },
-  { value: 'noisy', label: 'Caminhão ruidoso' },
+  { value: 'noisy', label: 'Outlier ruidoso' },
   { value: 'slowEntry', label: 'Entrada lenta' },
-  { value: 'duplicateRetry', label: 'Retry duplicado' },
+  { value: 'duplicateRetry', label: '2ª passagem (idempotência)' },
 ]
 
 function parsePositiveInt(value: string): number | null {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { STABILIZATION_CONFIG } from './stabilizationConfig'
 import {
   advancePredictor,
   INITIAL_PREDICTOR_STATE,
@@ -21,6 +22,9 @@ describe('predictWeighing (mirrors StabilizationEngine.process)', () => {
     expect(result.weightKg).toBeCloseTo(5000, 3)
     expect(result.standardDeviation).toBeCloseTo(0, 3)
     expect(result.samplesUsed).toBe(20)
+    expect(result.range).toBeCloseTo(0, 3)
+    expect(result.validRatio).toBeCloseTo(1, 3)
+    expect(result.outliersRemoved).toBe(0)
   })
 
   it('small oscillating noise is still stable', () => {
@@ -40,6 +44,9 @@ describe('predictWeighing (mirrors StabilizationEngine.process)', () => {
     expect(result.weightKg).toBeCloseTo(5000, 3)
     expect(result.standardDeviation).toBeCloseTo(0, 3)
     expect(result.samplesUsed).toBe(19)
+    expect(result.outliersRemoved).toBe(1)
+    expect(result.validRatio).toBeCloseTo(19 / 20, 3)
+    expect(result.range).toBeCloseTo(0, 3) // range é sobre a base LIMPA — o outlier já saiu
   })
 
   it('a clear upward trend is never stable while ramping (mirrors the "slowEntry" truck profile)', () => {
@@ -71,6 +78,7 @@ describe('predictWeighing (mirrors StabilizationEngine.process)', () => {
     expect(result.stable).toBe(false)
     expect(result.samplesUsed).toBe(20)
     expect(result.standardDeviation).toBeCloseTo(142.3025, 2)
+    expect(result.range).toBeCloseTo(300, 3) // 5150 - 4850, acima de maxRangeKg=100
   })
 
   it('fewer samples than minSamples is never stable', () => {
@@ -98,6 +106,7 @@ describe('advancePredictor (mirrors ScaleSession.addReading timing)', () => {
       state = advancePredictor(state, window, sample.timestampMs)
     }
     expect(state.status).toBe('STABILIZING')
+    expect(state.stabilizingForMs).toBe(0) // acabou de virar STABILIZING nesta mesma leitura
 
     for (let i = 20; i < 25; i++) {
       const sample = { timestampMs: i * 500, weightKg: 5000 }
@@ -105,6 +114,8 @@ describe('advancePredictor (mirrors ScaleSession.addReading timing)', () => {
       state = advancePredictor(state, window, sample.timestampMs)
     }
     expect(state.status).toBe('STABILIZING')
+    expect(state.stabilizingForMs).toBeGreaterThan(0)
+    expect(state.stabilizingForMs).toBeLessThan(STABILIZATION_CONFIG.stabilityDurationMs)
   })
 
   it('stable for the full stabilityDurationMs reaches STABLE', () => {
@@ -118,5 +129,18 @@ describe('advancePredictor (mirrors ScaleSession.addReading timing)', () => {
     expect(state.status).toBe('STABLE')
     expect(state.weightKg).toBeCloseTo(5000, 3)
     expect(state.standardDeviation).toBeCloseTo(0, 3)
+    expect(state.stabilizingForMs).toBeGreaterThanOrEqual(STABILIZATION_CONFIG.stabilityDurationMs)
+  })
+
+  it('never-stable window keeps stabilizingForMs at 0', () => {
+    let state: PredictorState = INITIAL_PREDICTOR_STATE
+    const window: WeightSample[] = []
+    for (let i = 0; i < 20; i++) {
+      const sample = { timestampMs: i * 100, weightKg: 5000 + 20 * i } // slope bem acima do limite
+      window.push(sample)
+      state = advancePredictor(state, window, sample.timestampMs)
+    }
+    expect(state.status).toBe('COLLECTING')
+    expect(state.stabilizingForMs).toBe(0)
   })
 })
