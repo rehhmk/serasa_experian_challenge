@@ -73,7 +73,8 @@ evidência de backpressure — ver seção 7.
 `Caminhão` (placa, tara) · `TipoDeGrão` (nome, preço de compra/ton,
 estoque de referência kg — LOG-013/LOG-015) · `Filial` · `Balança` (id,
 filialId, apiKeyHash) · `TransportTransaction` (caminhão, tipo de grão,
-filial, status OPEN/COMPLETED, início/fim)
+filial, status OPEN/COMPLETED/CANCELLED, início/fim — no máximo uma OPEN por
+caminhão, índice único parcial `WHERE status = 'OPEN'` — LOG-020)
 
 **Núcleo de negócio:**
 
@@ -127,7 +128,11 @@ Fórmulas completas, thresholds de exemplo e cenários de teste: `LOG-007`.
   `readingId`, então deduplicar por `scaleId+plate+weight` corromperia o
   próprio sinal de estabilidade. A garantia real é
   `TransportTransaction → no máximo uma Weighing`, via `UNIQUE` constraint +
-  transação curta. *(LOG-008, LOG-009)*
+  transação curta. *(LOG-008, LOG-009)* Duas invariantes distintas, não uma
+  só: além dessa (uma transaction → no máximo uma Weighing), há também
+  "um caminhão → no máximo uma transaction **OPEN** por vez", garantida por
+  índice único parcial + `OpenTransportTransactionUseCase` retornando `409
+  Conflict` na segunda tentativa. *(LOG-020)*
 - **Concorrência** isolada por balança (`ConcurrentHashMap` + lock por
   sessão, nunca lock global) — atividade da Balança A nunca bloqueia a
   Balança B. *(LOG-005)*
@@ -200,14 +205,14 @@ de cada sugestão: `USO_DE_IA.md`.
 |---|---|---|---|
 | 1 | Cadastros | LOG-001 | ✅ |
 | 2 | Recepção HTTP, balanças concorrentes | LOG-002, 004, 005 | ✅ |
-| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016, 019 | ✅ implementado e testado (PRs #16, #17, #19; correções LOG-019) |
+| 3 | Estabilização + persistência (8 campos) | LOG-005, 006(rev), 007(rev), 009, 016, 019, 020 | ✅ implementado e testado (PRs #16, #17, #19; correções LOG-019, LOG-020) |
 | 4 | Relatórios/Estatísticas | LOG-015, seção 6 | ✅ 4 MUST implementados e testados (PR #21); SHOULD/COULD documentados como roadmap |
 | 5a | Arquitetura/desenho | LOG-002, 004, 011 + este blueprint | ✅ |
 | 5b | Autenticação das balanças | LOG-014 | ✅ implementado e testado (PR #18) |
 | 5c-i | Idempotência (no máximo 1 Weighing por TransportTransaction) | LOG-008, 016 | ✅ implementado e testado (PRs #17, #19) |
 | 5c-ii | Retentativa automática após falha | LOG-018 | ❌ não implementado — trade-off documentado do MVP, não confundir com 5c-i. Ver "Limitações conhecidas" |
 | 5d | Sugestão de expansão | seção 7 | ✅ |
-| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008, CODE-AI-001 a 008 | ✅ |
+| 6 | Uso de IA + prompt + código gerado | USO_DE_IA.md, AI-008, CODE-AI-001 a 009 | ✅ |
 
 ## 10. Limitações conhecidas e evolução para produção
 
@@ -217,6 +222,7 @@ entrevista — cada um já tem decisão registrada, nenhum é omissão silencios
 | Limitação | Onde documentado | Evolução (ver seção 7 e roteiro incremental) |
 |---|---|---|
 | Sem retry automático se a persistência falhar depois de `STABLE` | LOG-018 | Não transicionar `STABLE` como definitivo até a persistência confirmar, ou política de retry explícita no controller |
+| (Corrigido, LOG-020 — mantido aqui por contexto) Reuso de caminhões `SB...` entre sessões do sandbox podia deixar uma `TransportTransaction` OPEN órfã, causando uma 2ª abertura ambígua e uma pesagem que nunca era criada nem confirmada | LOG-020 | Índice único parcial (1 OPEN por truck) + sandbox se auto-recupera de um 409 cancelando a órfã. Residual: a recuperação tenta só 1 vez — um conflito mais profundo (ex: duas abas despachando o mesmo truck) aparece como "Transação duplicada" em vez de resolver sozinho |
 | `raw_readings` é bufferizado em memória (`ConcurrentLinkedQueue`) e flusha em lote síncrono ao atingir `flush-batch-size`; o lote residual (< batch size) em memória no momento de um crash/kill abrupto é perdido | LOG-006 (revisado) | Fila durável (ver seção 7) removeria essa janela de perda; fora de escopo sem evidência de que o volume de auditoria justifique |
 | Relatórios administrativos (`/api/reports/*`) não têm autenticação nem controle de papel — qualquer request sem credencial acessa, incluindo o Livro de Pesagens com `plate` | Seção 6 (nota LGPD é intenção de design, não controle implementado) | Spring Security + papel administrativo dedicado; não adicionado no MVP para não introduzir stack nova sem aprovação (CLAUDE.md §19) |
 | API key das balanças é estática por balança (LOG-014) — sem rotação automática, sem HMAC/mTLS | LOG-014 | Rotação de chave e/ou HMAC assinado quando houver evidência real de fraude/tampering (seção 7) |

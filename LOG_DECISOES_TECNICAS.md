@@ -1249,6 +1249,63 @@ Direção veio de um plano escrito por mim (revisão final pré-entrevista) apon
 
 ---
 
+# LOG-020 — Uma TransportTransaction OPEN por truck (índice único parcial), recuperação no sandbox
+
+## Problema que identifiquei
+
+Testando o sandbox publicado depois do LOG-019, vi caminhões terminando em "Não confirmado" mesmo em passagens que pareciam normais. Investiguei e a causa raiz não tinha nada a ver com o orçamento de confirmação (já alargado): `TransportTransactionController.open()` criava uma `TransportTransaction` OPEN direto no controller, sem checar se o truck já tinha uma. O sandbox reaproveita caminhões `SB...` entre sessões (`bootstrap.ts`) — uma aba fechada, um RESET no meio de uma passagem, ou só recarregar a página no momento errado deixa uma transaction OPEN órfã no banco. Na próxima vez que aquele truck é despachado, abre-se uma SEGUNDA transaction OPEN para o mesmo truck. `CompleteWeighingUseCase.resolveOpenTransaction` já era defensivo contra isso (`findByTruckIdAndStatus` retornando mais de uma linha vira `IncorrectResultSizeDataAccessException` → `BusinessRuleViolationException`), mas defensivo não é o mesmo que preventivo: a finalização falha, `ScaleReadingController` loga o erro e devolve 202 do mesmo jeito (ESP32 é fire-and-forget, LOG-018), nenhuma `Weighing` é criada, e o Livro de Pesagens nunca tem o que confirmar — daí "Não confirmado" para uma pesagem que **nunca existiu**, não para uma que só demorou.
+
+## Minha decisão
+
+Duas camadas, nunca uma sozinha:
+
+1. **Prevenção no banco.** Índice único **parcial**: `CREATE UNIQUE INDEX ... ON transport_transactions (truck_id) WHERE status = 'OPEN'`. Descartei `UNIQUE(truck_id, status)` puro porque isso quebraria o histórico normal de múltiplas transactions `COMPLETED`/`CANCELLED` do mesmo truck ao longo do tempo — o índice parcial restringe a exclusividade só às linhas `OPEN`. Essa é a garantia real sob concorrência: um `SELECT existe? -> INSERT` na aplicação, sozinho, tem uma janela entre as duas operações onde duas requisições concorrentes passam pela checagem antes de qualquer uma commitar.
+2. **Novo `OpenTransportTransactionUseCase`**, tirando a lógica de abrir transaction do controller: faz o `SELECT` primeiro (rejeita rápido no caminho comum, sem round-trip de exceção), mas captura `DataIntegrityViolationException` do `saveAndFlush` como a garantia de verdade contra a race. `ConflictException` nova (distinta de `BusinessRuleViolationException`) mapeada para **409**, não 422 — o pedido em si é válido, só não pode ser aplicado agora porque outro recurso (a transaction OPEN existente) já ocupa o lugar.
+3. **Sandbox se auto-recupera de um 409**: como só o próprio sandbox cria transaction para truck `SB...`, um 409 na abertura aciona `cancelStaleTransactionAndReopen` — acha a transaction OPEN do truck (`GET /api/transport-transactions?truckId=&status=OPEN`, filtro novo no endpoint já existente, não um endpoint novo), cancela via `POST /{id}/cancel` (já existia, só nunca era chamado pelo sandbox), tenta abrir de novo. Uma tentativa só, não um loop — se ainda conflitar depois de cancelar, é uma inconsistência mais séria (ex: duas abas despachando o mesmo truck ao mesmo tempo) e a UI mostra isso como seu próprio estado (`duplicateTransactionConflict` → "Transação duplicada"), não tenta escondê-lo atrás de "Não confirmado".
+4. **RESET do sandbox cancela proativamente** a transaction OPEN de qualquer truck parado no meio de uma passagem, antes de derrubar os atores — reduz a chance de sequer precisar do caminho reativo do item 3 (não elimina: fechar a aba sem clicar em Reiniciar ainda deixa uma órfã, e é exatamente pra isso que o item 3 existe).
+
+## Por que não mudei o `ScaleReadingController`
+
+Revisei o pedido de "não transformar falha de finalização em sucesso enganoso" e decidi **manter** o catch de `RuntimeException` retornando 202 — isso já é intencional e documentado (LOG-018): o ESP32 é fire-and-forget e nunca lê o corpo/status da resposta, então mudar o código HTTP dali não mudaria nada no dispositivo real e violaria uma decisão já tomada sem motivo novo. O problema nunca esteve em como o controller responde ao POST de leitura — estava em deixar a finalização falhar por uma causa evitável (duplicata) em vez de evitá-la.
+
+## Trade-off aceito
+
+O índice parcial move a garantia de "um truck, uma transaction ativa" para fora do código de aplicação — não dá pra ver essa invariante só lendo `OpenTransportTransactionUseCase.java`, tem que saber que ela existe na migration. Aceito porque é exatamente o mesmo padrão já usado em LOG-008 (`UNIQUE(transport_transaction_id)` em `weighings`) — uma convenção já estabelecida no projeto, não uma novidade.
+
+## Testes obrigatórios (mapeamento)
+
+| Cenário pedido | Onde |
+|---|---|
+| 1ª abertura | `OpenTransportTransactionUseCaseTest.firstOpenTransactionForATruckSucceeds` |
+| 2ª tentativa sequencial | `OpenTransportTransactionUseCaseTest` (mock) + `TransportTransactionOpeningIntegrationTest.secondSequentialOpenAttemptWhileFirstIsStillOpenIsRejectedWith409` (Postgres real) |
+| Tentativas concorrentes | `TransportTransactionOpeningIntegrationTest.concurrentOpenAttemptsForTheSameTruckProduceExactlyOneOpenTransaction` — 15 threads, Postgres real |
+| Reabrir após COMPLETED/CANCELLED | `TransportTransactionOpeningIntegrationTest.newOpenTransactionSucceedsAfterThePreviousOneWasCancelled` |
+| Múltiplas OPEN inconsistentes (dado legado) | já coberto por `CompleteWeighingUseCaseTest.ambiguousOpenTransactionMatchThrowsBusinessRuleViolation`, sem mudança |
+| Reset sem acumular OPEN | `yardMachine.test.ts` — "cancela a transaction OPEN de um caminhão parado no meio de uma passagem antes de resetar" |
+| Confirmação positiva pelo relatório | já coberto (inalterado) por `truckMachine.test.ts`/`truckDisplay.test.ts` |
+| Erro/timeout mostrado corretamente | `truckMachine.test.ts` — describe "conflito de transaction OPEN (LOG-020)", 3 cenários |
+| Retries de confirmação não criam nada novo | `truckMachine.test.ts` — assert `openTransportTransaction` chamado 1x mesmo depois de 10 retries de confirmação |
+
+## Validação
+
+Unitários: `mvn test` verde sob JDK 17 (45 testes, incluindo os 5 novos de `OpenTransportTransactionUseCaseTest`). Integração (`TransportTransactionOpeningIntegrationTest`, Testcontainers): escrita e revisada, **não executada nesta máquina** — mesma incompatibilidade Testcontainers/Docker Desktop já documentada no LOG-019. Compensei com a mesma técnica de antes: apliquei a migration manualmente no Postgres do `docker-compose` e rodei 15 `INSERT`s concorrentes de verdade contra `transport_transactions` — exatamente 1 sucesso, 14 rejeitados por `duplicate key value violates unique constraint`, 1 linha `OPEN` final. Revertido depois (`DROP INDEX`, dados de teste apagados) pra não deixar o Postgres local num estado que o Flyway não reconhece. Frontend: 76 testes verdes (era 69 antes desta mudança), lint limpo, build de produção OK.
+
+## Refinamento descoberto ao checar o ambiente publicado (mesma sessão)
+
+Antes de considerar isso pronto, chequei (só leitura — nenhum cancelamento) se o ambiente Render já tinha dado contaminado de verdade. Tinha: **os 18 caminhões `SB...` do sandbox tinham 188 `TransportTransaction` OPEN cada um** (~3.400 linhas) — acumuladas ao longo de várias sessões de teste deste dia inteiro, não um punhado de órfãs. Isso expôs um gap real na minha própria implementação: `OpenTransportTransactionUseCase.open()` e o filtro de `TransportTransactionController.list()` usavam `findByTruckIdAndStatus` (retorna `Optional`) pra checar "já existe uma OPEN?" — contra um truck com **múltiplas** OPEN pré-existentes (dado legado, de antes da V10), essa chamada estoura `IncorrectResultSizeDataAccessException` **não capturada** nesses dois pontos (`CompleteWeighingUseCase` já capturava isso, LOG-009 original; os dois pontos novos deste LOG não capturavam). Resultado: em vez de um 409 limpo, esses dois caminhos devolveriam 500 — e pior, a própria rota de autorrecuperação do sandbox (que usa exatamente esse `list()` filtrado pra achar o que cancelar) não conseguiria nem listar o que precisa cancelar.
+
+Corrigido adicionando `findAllByTruckIdAndStatus` (retorna `List`, nunca estoura) ao repositório, e trocando os dois pontos novos (`OpenTransportTransactionUseCase`, `TransportTransactionController.list`) pra usá-lo — `CompleteWeighingUseCase` continua com o `Optional` original de propósito (ele *quer* estourar em caso de ambiguidade, é a semântica certa pra finalização). Novo teste (`aTruckAlreadyContaminatedWithManyOpenTransactionsIsStillACleanConflictNotACrash`) prova que 188 OPEN pré-existentes ainda viram um `ConflictException`/409 limpo, não uma exceção não tratada. Esse cenário só é testável a nível de unit test (mock) — uma vez a migration V10 aplicada, o próprio banco impede recriar "múltiplas OPEN pro mesmo truck" pra testar via integração real.
+
+## Trigger para revisitar
+
+Se o índice parcial virar gargalo de escrita (não há evidência disso na escala atual — dezenas de trucks, não milhares) ou se o sandbox precisar rodar várias abas/sessões despachando o mesmo truck deliberadamente (hoje não é um caso de uso), revisar a estratégia de recuperação de conflito (hoje: 1 tentativa, depois desiste e mostra "Transação duplicada").
+
+## Como usei IA
+
+Você trouxe o diagnóstico já investigado e confirmado (a causa raiz nos 9 passos do seu relatório) e uma direção recomendada detalhada, incluindo o que evitar (`UNIQUE(truck_id, status)` ingênuo, não mascarar falha real como sucesso). Pedi para a IA confirmar cada passo do diagnóstico lendo o código atual antes de implementar — ela confirmou `TransportTransactionController.open()` sem nenhuma checagem, exatamente como descrito. A decisão de usar índice único PARCIAL (em vez de lock explícito no agregado Truck) foi meu critério dentro do espaço de opções que você abriu ("lock apropriado; ou outra garantia equivalente, simples e testável") — mesma família de solução já usada em LOG-008, então não introduz um padrão novo no projeto. A IA identificou, ao tentar validar, que a suíte de integração nova também esbarra na mesma incompatibilidade de ambiente do LOG-019 (não uma surpresa nova, já era esperado) e usou de novo a prova alternativa via `psql` direto, revertendo o estado do banco local ao final em vez de deixar uma migration "fantasma" aplicada fora do Flyway.
+
+---
+
 # Síntese das minhas decisões
 
 Minha arquitetura final não foi escolhida porque é a mais sofisticada.

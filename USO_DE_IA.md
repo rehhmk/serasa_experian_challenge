@@ -643,7 +643,7 @@ Justificativa técnica.
 
 A partir daqui a IA (Claude Code) deixou de ser só interlocutor de design (seções 3 e AI-001–AI-009) e passou a implementar diretamente — sempre em modo agente, nunca copiando/colando de um chat. Meu papel nessa fase mudou de forma, não desapareceu: para cada componente eu (1) exigi um plano por escrito antes de qualquer código — arquivos, desenho, testes, dúvidas em aberto — conforme o protocolo que eu mesmo defini no `CLAUDE.md` seção 24; (2) fui interrompido explicitamente sempre que a IA encontrou uma decisão de engenharia ou de produto não coberta pelos LOGs existentes, e decidi cada uma dessas vezes via pergunta direta, não a IA sozinha; (3) só aceitei um componente como pronto depois de `mvn clean verify` e, nos casos de integração (Postgres real via Testcontainers, deploy), validação contra infraestrutura real, não só teste unitário.
 
-Os 8 registros abaixo cobrem os componentes que faltavam do MVP (`StabilizationEngine` → relatórios), o deploy do dev environment, e uma revisão final pré-entrevista — nessa ordem, PRs #16 a #24 do repositório mais a revisão registrada em LOG-019.
+Os 9 registros abaixo cobrem os componentes que faltavam do MVP (`StabilizationEngine` → relatórios), o deploy do dev environment, e duas rodadas de revisão final pré-entrevista — nessa ordem, PRs #16 a #24 do repositório mais as revisões registradas em LOG-019 e LOG-020.
 
 ## CODE-AI-001 — StabilizationEngine (LOG-007)
 
@@ -922,6 +922,44 @@ Essas duas correções são exatamente o tipo de bug que uma revisão de consist
 ### Validação
 
 `CompleteWeighingUseCaseTest` (6 testes, incluindo o novo `grossWeightNotGreaterThanTareWeightIsRejected`) e os outros 3 arquivos de teste unitário — 41 testes, `mvn test` verde sob JDK 17. `GrainStockConcurrencyIntegrationTest` escrito e correto por revisão de código, mas não executado nesta máquina (Testcontainers/Docker incompatível — ver acima); prova equivalente feita com 20 processos `psql` concorrentes contra o Postgres real do `docker-compose` (1000 → 1200 exato, sem perda). Pendência explícita: confirmar `GrainStockConcurrencyIntegrationTest` verde em CI ou numa máquina com Testcontainers/Docker compatíveis antes de considerar o teste definitivamente validado em execução, não só em leitura.
+
+---
+
+## CODE-AI-009 — Uma TransportTransaction OPEN por truck (LOG-020)
+
+### Problema que eu queria resolver
+
+Depois do LOG-019, testei o sandbox publicado de verdade e vi caminhões terminando em "Não confirmado" — meu diagnóstico inicial (LOG-019, orçamento de confirmação curto) não era a causa completa. Investiguei mais e achei a causa raiz real: `TransportTransactionController.open()` nunca checava se o truck já tinha uma transaction OPEN, e o sandbox reaproveita caminhões `SB...` entre sessões — uma aba fechada ou um RESET no meio de uma passagem deixa uma transaction OPEN órfã, e a próxima vez que aquele truck é despachado, `CompleteWeighingUseCase` encontra duas e desiste (ambíguo, por design — LOG-009).
+
+### Minha direção de implementação
+
+Cheguei com o diagnóstico completo (9 passos, do sintoma na UI até a causa raiz no controller) e uma direção detalhada: índice único parcial no banco (não `UNIQUE(truck_id, status)` ingênuo, que quebraria o histórico de `COMPLETED`), 409 em vez de 422/500, sandbox se recuperando sozinho de uma transaction órfã do próprio reuso, e uma lista de 10 cenários de teste obrigatórios.
+
+### Prompt
+
+Relatório escrito por você com os 9 passos da causa raiz já confirmados, arquivos prováveis, comportamento esperado, direção recomendada (com o que evitar explicitamente) e 10 cenários de teste — pedi pra IA inspecionar o código antes de implementar qualquer coisa, e só codar depois de confirmar o diagnóstico linha a linha.
+
+### Código gerado
+
+Arquivos novos: `ConflictException.java`, `OpenTransportTransactionUseCase.java`, migration `V10__unique_open_transaction_per_truck.sql`, `OpenTransportTransactionUseCaseTest.java`, `TransportTransactionOpeningIntegrationTest.java` (3 cenários: sequencial, concorrente, reabertura pós-cancelamento). Modificados: `TransportTransactionController.java` (delega abertura, filtro `truckId`+`status` no `list()` existente), `GlobalExceptionHandler.java` (409), `truckMachine.ts` (2 estados novos: `resolvingTransactionConflict`, `duplicateTransactionConflict`), `yardMachine.ts` (RESET cancela transaction em andamento), `truckDisplay.ts`, `transportTransactions.ts` (2 funções novas, 0 endpoints novos), mais os arquivos de teste correspondentes.
+
+### Minha revisão
+
+- **ACCEPTED** — índice único parcial (`WHERE status = 'OPEN'`) em vez de lock explícito no agregado Truck. Você deixou as duas opções abertas ("lock apropriado; ou outra garantia equivalente, simples e testável"); a IA escolheu o índice parcial e justificou pelo precedente já existente no projeto (LOG-008 usa exatamente esse padrão pra "uma transaction → no máximo uma Weighing") — não é um padrão novo sendo introduzido.
+- **ACCEPTED** — duas camadas (SELECT otimista + `DataIntegrityViolationException` do banco como garantia real), não uma peça só. A IA foi explícita sobre por que o SELECT sozinho não bastaria (TOCTOU) antes mesmo de eu perguntar.
+- **ACCEPTED** — filtro `truckId`+`status` no endpoint `GET /api/transport-transactions` já existente, em vez de um endpoint novo. Resolve exatamente "o sandbox precisa achar a transaction OPEN de um truck" sem crescer a API.
+- **ACCEPTED** — manter `ScaleReadingController` como está (202 sempre, RuntimeException só logada). Pedi pra revisar isso explicitamente; a IA concluiu que mudar violaria o LOG-018 sem motivo novo (o ESP32 nunca lê a resposta) e que o problema real nunca esteve ali — documentou a decisão de NÃO mexer com a mesma seriedade de uma mudança de código.
+- **MODIFIED (processo)** — a primeira versão do teste de conflito em `truckMachine.test.ts` tinha uma asserção de estado intermediário (`resolvingTransactionConflict` logo após um único flush de timer) que falhou na primeira rodada — fake timers do vitest drenam a cadeia inteira de promises numa passada só, não passo a passo. A IA rodou o teste, viu o resultado real, e corrigiu a asserção em vez de forçar o timing pra bater com a expectativa errada.
+
+### Por que
+
+Duas transactions OPEN pro mesmo truck é exatamente a classe de bug que "parece" só de UI (uma pesagem "não confirmada") mas a causa é de consistência de dados no backend — resolver só o sintoma (esperar mais) já tinha sido tentado no LOG-019 e não bastava. Preferi (e a IA concordou explicitamente) investigar a causa raiz de novo em vez de aumentar ainda mais o orçamento de retry.
+
+### Validação
+
+Backend: `mvn test` verde sob JDK 17 (45 testes, +5 de `OpenTransportTransactionUseCaseTest` vs. antes). `TransportTransactionOpeningIntegrationTest` (Testcontainers, 3 cenários incluindo 15 aberturas concorrentes) escrito e correto por revisão, não executado nesta máquina pelo mesmo motivo do LOG-019 — compensado com 15 `INSERT`s concorrentes de verdade contra `transport_transactions` no Postgres do `docker-compose` (migration aplicada manualmente, testada, revertida): exatamente 1 sucesso, 14 rejeitados por violação do índice, 1 linha `OPEN` final. Frontend: 76 testes verdes (era 69), lint limpo, build de produção OK.
+
+Antes de considerar pronto, pedi pra IA checar (só leitura) se o ambiente Render já tinha dado contaminado de verdade, não só simulado. Tinha — e bem mais do que eu esperava: 18 caminhões do sandbox, 188 `TransportTransaction` OPEN cada um. Isso expôs um bug real na primeira versão da própria correção: a checagem de "já existe uma OPEN?" usava um método que estoura exceção não tratada (500, não 409) quando encontra *mais de uma* — exatamente o estado desses 18 caminhões contaminados. A IA identificou isso sozinha ao investigar o resultado da checagem no ambiente real, propôs a correção (método de repositório separado, retornando `List` em vez de `Optional`, só nos dois pontos que precisam dessa semântica) e adicionou um teste específico pra esse cenário antes de eu pedir. Ver LOG-020, seção "Refinamento descoberto ao checar o ambiente publicado".
 
 ---
 
