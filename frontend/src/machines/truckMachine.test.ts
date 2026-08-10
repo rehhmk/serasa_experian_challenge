@@ -1,14 +1,23 @@
 import { assign, createActor, setup, type ActorRefFrom } from 'xstate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { truckMachine, type TruckInput } from './truckMachine'
-import { openTransportTransaction } from '../api/transportTransactions'
+import { ApiRequestError } from '../api/http'
+import {
+  cancelTransportTransaction,
+  findOpenTransportTransactionForTruck,
+  openTransportTransaction,
+} from '../api/transportTransactions'
 import { postReading } from '../api/readings'
 import { getWeighingBook } from '../api/reports'
 import type { TransportTransaction, WeighingBookItem } from '../api/types'
 import type { WeightSample } from '../simulation/stabilizationPredictor'
 
 vi.mock('../api/readings', () => ({ postReading: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('../api/transportTransactions', () => ({ openTransportTransaction: vi.fn() }))
+vi.mock('../api/transportTransactions', () => ({
+  openTransportTransaction: vi.fn(),
+  findOpenTransportTransactionForTruck: vi.fn().mockResolvedValue([]),
+  cancelTransportTransaction: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../api/reports', () => ({ getWeighingBook: vi.fn() }))
 
 const TEST_INPUT: TruckInput = {
@@ -135,6 +144,9 @@ describe('truckMachine', () => {
     expect(actor.getSnapshot().value).toBe('unconfirmed')
     // confirmAttempts vira 10 (MAX_CONFIRM_ATTEMPTS) só depois da 10ª chamada — não há uma 11ª.
     expect(getWeighingBook).toHaveBeenCalledTimes(10)
+    // LOG-020, requisito 10: retries de confirmação são só leitura (GET) —
+    // nunca abrem uma nova transaction nem mandam uma nova leitura.
+    expect(openTransportTransaction).toHaveBeenCalledTimes(1)
     actor.stop()
   })
 
@@ -165,6 +177,71 @@ describe('truckMachine', () => {
     expect(postReading).toHaveBeenCalledWith(
       expect.objectContaining({ scaleId: 'sandbox-scale-1', apiKey: 'key-1', plate: TEST_INPUT.plate }),
     )
+    actor.stop()
+  })
+})
+
+describe('truckMachine — conflito de transaction OPEN (LOG-020)', () => {
+  it('409 na abertura: cancela a transaction OPEN órfã do próprio truck e reabre com sucesso', async () => {
+    vi.mocked(openTransportTransaction)
+      .mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+      .mockResolvedValueOnce({ ...OPEN_TRANSACTION, id: 'tx-2' })
+    const staleTransaction = { ...OPEN_TRANSACTION, id: 'tx-stale' }
+    vi.mocked(findOpenTransportTransactionForTruck).mockResolvedValueOnce([staleTransaction])
+
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200) // TRAVEL_MS
+    // Uma única leitura de fake timers já drena toda a cadeia de promises
+    // (openTransaction rejeita -> resolvingTransactionConflict -> cancela ->
+    // reabre com sucesso) — não há timer real entre esses passos.
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(findOpenTransportTransactionForTruck).toHaveBeenCalledWith(TEST_INPUT.truckId)
+    expect(cancelTransportTransaction).toHaveBeenCalledWith('tx-stale')
+    expect(actor.getSnapshot().matches({ onScale: 'collecting' })).toBe(true)
+    expect(actor.getSnapshot().context.transactionId).toBe('tx-2')
+    actor.stop()
+  })
+
+  it('409 persiste mesmo após cancelar e tentar de novo: mostra "transação duplicada", não trava, volta pra fila', async () => {
+    vi.mocked(openTransportTransaction)
+      .mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+      .mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+    vi.mocked(findOpenTransportTransactionForTruck).mockResolvedValueOnce([{ ...OPEN_TRANSACTION, id: 'tx-stale' }])
+
+    const harness = setup({ actors: { truck: truckMachine } }).createMachine({
+      context: ({ spawn }) => ({ child: spawn('truck', { input: TEST_INPUT }) }),
+      on: { TRUCK_DONE: {} },
+    })
+    const parent = createActor(harness).start()
+    const child = parent.getSnapshot().context.child
+
+    child.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0) // 1ª tentativa -> resolvingTransactionConflict
+    await vi.advanceTimersByTimeAsync(0) // 2ª tentativa (dentro da recuperação) -> ainda 409
+
+    expect(child.getSnapshot().value).toBe('duplicateTransactionConflict')
+
+    await vi.advanceTimersByTimeAsync(2000) // DUPLICATE_CONFLICT_PAUSE_MS
+    expect(child.getSnapshot().value).toBe('leaving')
+
+    await vi.advanceTimersByTimeAsync(600) // LEAVE_MS
+    expect(child.getSnapshot().value).toBe('queued') // disponível pro próximo dispatch, não travado
+    parent.stop()
+  })
+
+  it('erro não-409 na abertura continua indo pro transactionError genérico (comportamento antigo preservado)', async () => {
+    vi.mocked(openTransportTransaction).mockRejectedValueOnce(new Error('network down'))
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(actor.getSnapshot().value).toBe('transactionError')
+    expect(findOpenTransportTransactionForTruck).not.toHaveBeenCalled()
     actor.stop()
   })
 })

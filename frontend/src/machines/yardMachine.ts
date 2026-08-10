@@ -1,6 +1,7 @@
 import { assign, enqueueActions, fromPromise, setup, type ActorRefFrom } from 'xstate'
 import { bootstrapSandbox, provisionScales, provisionTrucks } from '../api/bootstrap'
 import { getScaleKey } from '../api/scaleKeyStore'
+import { cancelTransportTransaction } from '../api/transportTransactions'
 import type { ScaleSummary, Truck } from '../api/types'
 import type { TruckProfileName } from '../simulation/readingProfiles/types'
 import { truckMachine } from './truckMachine'
@@ -323,10 +324,24 @@ export const yardMachine = setup({
         REQUEUE: {
           actions: assign({ queue: ({ context, event }) => [...context.queue, event.descriptorId] }),
         },
+        // LOG-020: um truck parado no meio de uma passagem (onScale,
+        // confirming, etc.) ainda segura uma TransportTransaction OPEN no
+        // backend — sem isso, ela fica órfã e a PRÓXIMA vez que esse mesmo
+        // truck "SB..." for despachado, a abertura esbarra num 409
+        // (resolvido de qualquer forma pelo próprio truckMachine, mas só
+        // reativamente, no próximo dispatch). Cancelar aqui, no reset, evita
+        // até precisar chegar nesse caminho. Best-effort: se o truck já não
+        // tinha transaction (na fila) ou ela já não está mais OPEN
+        // (recorded/completou), cancelTransportTransaction falha com 4xx —
+        // ignorado de propósito, não é um erro real neste contexto.
         RESET: {
           target: 'bootstrapping',
           actions: enqueueActions(({ context, enqueue }) => {
             for (const ref of Object.values(context.truckRefs)) {
+              const transactionId = ref.getSnapshot().context.transactionId
+              if (transactionId) {
+                void cancelTransportTransaction(transactionId).catch(() => {})
+              }
               enqueue.stopChild(ref)
             }
           }),

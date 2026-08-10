@@ -2,6 +2,7 @@ import { createActor } from 'xstate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { yardMachine, type YardInput } from './yardMachine'
 import { bootstrapSandbox, provisionScales, provisionTrucks } from '../api/bootstrap'
+import { cancelTransportTransaction, openTransportTransaction } from '../api/transportTransactions'
 import { clearScaleKeys, getScaleKey, setScaleKey } from '../api/scaleKeyStore'
 import type { Branch, GrainType, ScaleSummary, Truck } from '../api/types'
 
@@ -13,8 +14,15 @@ vi.mock('../api/bootstrap', () => ({
 // truckMachine chama estes módulos direto — mockados pra nenhum truck
 // spawnado tentar rede de verdade, mesmo que os testes daqui não avancem
 // nenhum caminhão até o fim do ciclo (isso já é coberto por truckMachine.test.ts).
+// openTransportTransaction nunca resolve por padrão (trucks ficam presos em
+// "abrindo transação", nunca ganham transactionId) — o teste de RESET que
+// precisa de um transactionId de verdade sobrescreve isso pontualmente.
 vi.mock('../api/readings', () => ({ postReading: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('../api/transportTransactions', () => ({ openTransportTransaction: vi.fn(() => new Promise(() => {})) }))
+vi.mock('../api/transportTransactions', () => ({
+  openTransportTransaction: vi.fn(() => new Promise(() => {})),
+  findOpenTransportTransactionForTruck: vi.fn().mockResolvedValue([]),
+  cancelTransportTransaction: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../api/reports', () => ({ getWeighingBook: vi.fn(() => new Promise(() => {})) }))
 
 const BRANCH: Branch = { id: 'branch-1', name: 'Sandbox Branch', city: null, state: null }
@@ -238,6 +246,51 @@ describe('yardMachine RESET', () => {
 
     expect(actor.getSnapshot().value).toBe('ready')
     expect(oldRef.getSnapshot().status).toBe('stopped')
+    actor.stop()
+  })
+
+  // LOG-020: um truck resetado no meio de uma passagem ainda segura uma
+  // TransportTransaction OPEN no backend de verdade — sem cancelar aqui,
+  // ela fica órfã e o próximo dispatch desse mesmo truck "SB..." esbarraria
+  // num 409 (truckMachine se recupera sozinho disso, mas só reativamente).
+  it('cancela a transaction OPEN de um caminhão parado no meio de uma passagem antes de resetar', async () => {
+    vi.mocked(openTransportTransaction).mockResolvedValue({
+      id: 'tx-mid-pass',
+      truckId: 't1',
+      grainTypeId: GRAIN_TYPE.id,
+      branchId: BRANCH.id,
+      status: 'OPEN',
+      purchasePriceSnapshot: 1000,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+    })
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 1 })
+
+    actor.send({ type: 'DISPATCH_NEXT' })
+    await vi.advanceTimersByTimeAsync(1200) // TRAVEL_MS -> openingTransaction
+    await vi.advanceTimersByTimeAsync(0) // flush openTransportTransaction resolvido
+
+    expect(actor.getSnapshot().context.truckRefs.t1.getSnapshot().context.transactionId).toBe('tx-mid-pass')
+
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    actor.send({ type: 'RESET' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(cancelTransportTransaction).toHaveBeenCalledWith('tx-mid-pass')
+    actor.stop()
+  })
+
+  it('não tenta cancelar nada para um caminhão ainda na fila (sem transactionId)', async () => {
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    const actor = await bootAndReachReady({ numLanes: 1, numTrucks: 1 })
+    // t1 segue 'queued' — nunca foi despachado, nunca teve transactionId.
+
+    mockBootstrap([scale('sandbox-a')], [truck('t1', 'SBAAAAA')])
+    actor.send({ type: 'RESET' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(cancelTransportTransaction).not.toHaveBeenCalled()
     actor.stop()
   })
 })

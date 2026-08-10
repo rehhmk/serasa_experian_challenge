@@ -40,6 +40,12 @@ export function describeTruckDisplay(snapshot: SnapshotFrom<typeof truckMachine>
   if (snapshot.matches('transactionError')) {
     return { label: 'Erro', tone: 'danger', roadPercent: 35 }
   }
+  if (snapshot.matches('resolvingTransactionConflict')) {
+    return { label: 'Resolvendo conflito', tone: 'progress', roadPercent: 35 }
+  }
+  if (snapshot.matches('duplicateTransactionConflict')) {
+    return { label: 'Transação duplicada', tone: 'danger', roadPercent: 35 }
+  }
   if (snapshot.matches('emptying')) {
     return { label: 'Esvaziando (2ª passagem)', tone: 'neutral', roadPercent: 65 }
   }

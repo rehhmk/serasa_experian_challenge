@@ -1,6 +1,7 @@
 import { createActor, setup } from 'xstate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { truckMachine, type TruckInput } from '../../machines/truckMachine'
+import { ApiRequestError } from '../../api/http'
 import { openTransportTransaction } from '../../api/transportTransactions'
 import { getWeighingBook } from '../../api/reports'
 import type { TransportTransaction, WeighingBookItem } from '../../api/types'
@@ -8,7 +9,11 @@ import type { WeightSample } from '../../simulation/stabilizationPredictor'
 import { describeTruckDisplay, describeWeighingResult } from './truckDisplay'
 
 vi.mock('../../api/readings', () => ({ postReading: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('../../api/transportTransactions', () => ({ openTransportTransaction: vi.fn() }))
+vi.mock('../../api/transportTransactions', () => ({
+  openTransportTransaction: vi.fn(),
+  findOpenTransportTransactionForTruck: vi.fn().mockResolvedValue([]),
+  cancelTransportTransaction: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../../api/reports', () => ({ getWeighingBook: vi.fn() }))
 
 const TEST_INPUT: TruckInput = {
@@ -145,6 +150,45 @@ describe('describeTruckDisplay', () => {
     expect(display.label).toBe('Saindo')
     expect(display.roadPercent).toBeGreaterThan(50)
     parent.stop()
+  })
+
+  it('resolvingTransactionConflict -> "Resolvendo conflito" (LOG-020)', async () => {
+    vi.mocked(openTransportTransaction).mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+    // cancelStaleTransactionAndReopen chama findOpenTransportTransactionForTruck + openTransportTransaction de
+    // novo — sem resolver nenhum dos dois aqui, a máquina fica parada em resolvingTransactionConflict pra dar
+    // tempo do assert (mesmo truque do beforeEach de yardMachine.test.ts pra travar num estado intermediário).
+    const { findOpenTransportTransactionForTruck } = await import('../../api/transportTransactions')
+    vi.mocked(findOpenTransportTransactionForTruck).mockReturnValueOnce(new Promise(() => {}))
+
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(describeTruckDisplay(actor.getSnapshot())).toEqual({
+      label: 'Resolvendo conflito',
+      tone: 'progress',
+      roadPercent: 35,
+    })
+    actor.stop()
+  })
+
+  it('duplicateTransactionConflict -> "Transação duplicada" (LOG-020)', async () => {
+    vi.mocked(openTransportTransaction)
+      .mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+      .mockRejectedValueOnce(new ApiRequestError(409, null, 'Conflict'))
+
+    const actor = createActor(truckMachine, { input: TEST_INPUT }).start()
+    actor.send({ type: 'DISPATCH', scaleId: 'sandbox-scale-1', apiKey: 'key-1' })
+    await vi.advanceTimersByTimeAsync(1200)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(describeTruckDisplay(actor.getSnapshot())).toEqual({
+      label: 'Transação duplicada',
+      tone: 'danger',
+      roadPercent: 35,
+    })
+    actor.stop()
   })
 })
 

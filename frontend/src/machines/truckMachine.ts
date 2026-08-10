@@ -1,7 +1,12 @@
 import { assign, fromCallback, fromPromise, sendParent, setup } from 'xstate'
+import { ApiRequestError } from '../api/http'
 import { postReading } from '../api/readings'
 import { getWeighingBook } from '../api/reports'
-import { openTransportTransaction } from '../api/transportTransactions'
+import {
+  cancelTransportTransaction,
+  findOpenTransportTransactionForTruck,
+  openTransportTransaction,
+} from '../api/transportTransactions'
 import type { WeighingBookItem } from '../api/types'
 import { createDuplicateRetryProfile } from '../simulation/readingProfiles/duplicateRetry'
 import { createNoisyProfile } from '../simulation/readingProfiles/noisy'
@@ -42,6 +47,10 @@ const CONFIRM_FROM_SAFETY_MARGIN_MS = 10_000
 // Tempo esvaziando antes de reabrir uma 2ª transação (duplicateRetry, LOG-008)
 // — emptyDurationMs real do backend + margem pra jitter de rede.
 const EMPTY_MARGIN_MS = STABILIZATION_CONFIG.emptyDurationMs + 300
+// Pausa visível depois de um conflito de transação não resolvido (LOG-020) —
+// mesmo valor de UNCONFIRMED_PAUSE_MS, mesmo papel: dar tempo de o usuário
+// ler o estado antes do caminhão voltar pra fila.
+const DUPLICATE_CONFLICT_PAUSE_MS = UNCONFIRMED_PAUSE_MS
 
 export interface TruckInput {
   descriptorId: string
@@ -165,6 +174,21 @@ export const truckMachine = setup({
       { truckId: string; grainTypeId: string; branchId: string }
     >(({ input }) => openTransportTransaction(input)),
 
+    // LOG-020: só roda quando openTransaction voltou 409 (truck já tem uma
+    // OPEN) — reaproveitar um truck "SB..." entre sessões do sandbox pode
+    // deixar uma transaction OPEN órfã (aba fechada/RESET no meio de uma
+    // passagem). Como só o próprio sandbox cria transaction pra truck
+    // "SB...", cancelar a que já existe e tentar abrir de novo é seguro
+    // aqui — nunca cancela nada que não foi o sandbox quem criou.
+    cancelStaleTransactionAndReopen: fromPromise<
+      Awaited<ReturnType<typeof openTransportTransaction>>,
+      { truckId: string; grainTypeId: string; branchId: string }
+    >(async ({ input }) => {
+      const stale = await findOpenTransportTransactionForTruck(input.truckId)
+      await Promise.all(stale.map((transaction) => cancelTransportTransaction(transaction.id)))
+      return openTransportTransaction(input)
+    }),
+
     // Um invoke por passagem pela balança, compartilhado entre collecting/
     // stabilizing/stable (vive em onScale, não nos filhos) — só é derrubado
     // quando a máquina sai de onScale de vez.
@@ -268,11 +292,53 @@ export const truckMachine = setup({
           target: 'onScale',
           actions: assign(({ context, event }) => nextPassContext(context, event.output.id)),
         },
+        // LOG-020: um 409 (truck já tem transaction OPEN — provavelmente
+        // órfã de uma sessão anterior do sandbox) tenta se auto-recuperar;
+        // qualquer outro erro (rede, GrainType não encontrado, etc.) cai no
+        // caminho genérico já existente.
+        onError: [
+          {
+            guard: ({ event }) => event.error instanceof ApiRequestError && event.error.status === 409,
+            target: 'resolvingTransactionConflict',
+          },
+          {
+            target: 'transactionError',
+            actions: assign({ lastError: ({ event }) => String(event.error) }),
+          },
+        ],
+      },
+    },
+    // LOG-020: só chega aqui num 409 — auto-recuperação de uma transaction
+    // OPEN órfã do mesmo truck "SB..." (única entidade que o sandbox cria
+    // transaction pra ela, então cancelar é seguro). Uma única tentativa,
+    // não um loop — se ainda conflitar depois de cancelar, algo mais sério
+    // está acontecendo (ex: outra aba do sandbox despachando o mesmo truck
+    // ao mesmo tempo) e a UI precisa mostrar isso, não tentar pra sempre.
+    resolvingTransactionConflict: {
+      invoke: {
+        src: 'cancelStaleTransactionAndReopen',
+        input: ({ context }) => ({
+          truckId: context.truckId,
+          grainTypeId: context.grainTypeId,
+          branchId: context.branchId,
+        }),
+        onDone: {
+          target: 'onScale',
+          actions: assign(({ context, event }) => nextPassContext(context, event.output.id)),
+        },
         onError: {
-          target: 'transactionError',
+          target: 'duplicateTransactionConflict',
           actions: assign({ lastError: ({ event }) => String(event.error) }),
         },
       },
+    },
+    // Terminal desta passagem: conflito de transaction não foi resolvido
+    // nem depois de cancelar a órfã e tentar de novo. Visível na UI como seu
+    // próprio estado (não "Não confirmado" genérico) — LOG-020 pede essa
+    // distinção porque a causa é outra (nunca chegou a existir Weighing
+    // nenhuma, diferente de um timeout de confirmação de uma que existe).
+    duplicateTransactionConflict: {
+      after: { [DUPLICATE_CONFLICT_PAUSE_MS]: 'leaving' },
     },
     onScale: {
       invoke: {
@@ -370,10 +436,20 @@ export const truckMachine = setup({
           target: 'onScale',
           actions: assign(({ context, event }) => nextPassContext(context, event.output.id)),
         },
-        onError: {
-          target: 'transactionError',
-          actions: assign({ lastError: ({ event }) => String(event.error) }),
-        },
+        // LOG-020: um 409 (truck já tem transaction OPEN — provavelmente
+        // órfã de uma sessão anterior do sandbox) tenta se auto-recuperar;
+        // qualquer outro erro (rede, GrainType não encontrado, etc.) cai no
+        // caminho genérico já existente.
+        onError: [
+          {
+            guard: ({ event }) => event.error instanceof ApiRequestError && event.error.status === 409,
+            target: 'resolvingTransactionConflict',
+          },
+          {
+            target: 'transactionError',
+            actions: assign({ lastError: ({ event }) => String(event.error) }),
+          },
+        ],
       },
     },
     transactionError: {
