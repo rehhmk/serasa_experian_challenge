@@ -7,6 +7,7 @@ import com.serasaexperian.grainweighing.shared.BusinessRuleViolationException;
 import com.serasaexperian.grainweighing.shared.NotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,7 +38,17 @@ public class TransportTransactionController {
                 .body(TransportTransactionResponse.from(transaction));
     }
 
+    /**
+     * @Transactional aqui não é opcional: sem ele, o find() abaixo devolve
+     * uma entidade já "detached" (a mini-transação read-only do repository
+     * já fechou) — mutar transaction.cancel() nesse estado só muda o objeto
+     * Java em memória, nunca chega a fazer flush no banco. O endpoint
+     * respondia 200 com "status": "CANCELLED" no corpo sem nunca ter escrito
+     * nada — bug pré-existente, descoberto ao investigar por que o
+     * saneamento manual do LOG-020 não reduzia a contagem real de linhas.
+     */
     @PostMapping("/{id}/cancel")
+    @Transactional
     public TransportTransactionResponse cancel(@PathVariable UUID id) {
         TransportTransaction transaction = find(id);
         if (transaction.getStatus() != TransportTransactionStatus.OPEN) {
