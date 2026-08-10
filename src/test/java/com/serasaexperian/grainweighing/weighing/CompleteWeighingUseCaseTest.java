@@ -156,6 +156,28 @@ class CompleteWeighingUseCaseTest {
     }
 
     @Test
+    void grossWeightNotGreaterThanTareWeightIsRejected() {
+        Scale scale = scaleAtBranch(BRANCH_ID);
+        Truck truck = truckWithTare(BigDecimal.valueOf(8000));
+        TransportTransaction transaction = openTransactionAt(BRANCH_ID, BigDecimal.valueOf(1000));
+
+        when(scaleRepository.findById(SCALE_ID)).thenReturn(Optional.of(scale));
+        when(truckRepository.findByPlate(PLATE)).thenReturn(Optional.of(truck));
+        when(transportTransactionRepository.findByTruckIdAndStatus(TRUCK_ID, TransportTransactionStatus.OPEN))
+                .thenReturn(Optional.of(transaction));
+        when(weighingRepository.existsByTransportTransactionId(transaction.getId())).thenReturn(false);
+
+        // gross == tare (net == 0) — mesma proteção cobre gross < tare.
+        WeightResult stable = new WeightResult(true, 8000.0, 3.0, 20);
+
+        assertThatThrownBy(() -> useCase.complete(SCALE_ID, PLATE, stable))
+                .isInstanceOf(BusinessRuleViolationException.class);
+
+        verify(weighingRepository, never()).save(any());
+        verify(grainStockService, never()).increaseAvailableQuantity(any(), any(), any());
+    }
+
+    @Test
     void mismatchedScaleBranchAndTransactionBranchIsRejected() {
         UUID scaleBranch = UUID.randomUUID();
         UUID transactionBranch = UUID.randomUUID();

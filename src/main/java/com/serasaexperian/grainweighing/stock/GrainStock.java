@@ -34,10 +34,6 @@ public class GrainStock {
         this.availableQuantityKg = availableQuantityKg;
     }
 
-    public void increase(BigDecimal quantityKg) {
-        this.availableQuantityKg = this.availableQuantityKg.add(quantityKg);
-    }
-
     public UUID getId() {
         return id;
     }

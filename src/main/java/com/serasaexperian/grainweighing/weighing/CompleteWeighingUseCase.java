@@ -73,6 +73,13 @@ public class CompleteWeighingUseCase {
 
         BigDecimal grossWeightKg = BigDecimal.valueOf(stableResult.weightKg()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal tareWeightKg = truck.getTareWeightKg();
+
+        if (grossWeightKg.compareTo(tareWeightKg) <= 0) {
+            throw new BusinessRuleViolationException(
+                    "Gross weight " + grossWeightKg + "kg must be greater than tare weight " + tareWeightKg
+                            + "kg for truck " + plate);
+        }
+
         BigDecimal netWeightKg = grossWeightKg.subtract(tareWeightKg);
         BigDecimal netWeightTon = netWeightKg.divide(KG_PER_TON, TON_CONVERSION_SCALE, RoundingMode.HALF_UP);
         BigDecimal cost = transaction.getPurchasePriceSnapshot().multiply(netWeightTon)

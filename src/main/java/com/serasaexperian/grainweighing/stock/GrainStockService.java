@@ -6,8 +6,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * Chamado por weighing.CompleteWeighingUseCase dentro da mesma transação curta
- * (LOG-009) — a entidade retornada por findByBranchIdAndGrainTypeId já está
- * managed pelo persistence context, então increase() é suficiente (dirty checking).
+ * (LOG-009). O incremento é um UPDATE atômico no banco (ver
+ * GrainStockRepository.increaseAvailableQuantity), não read-modify-write via
+ * entidade gerenciada — duas balanças finalizando pesagens do mesmo
+ * branch/grainType ao mesmo tempo não perdem incremento uma da outra.
  */
 @Service
 public class GrainStockService {
@@ -19,9 +21,10 @@ public class GrainStockService {
     }
 
     public void increaseAvailableQuantity(UUID branchId, UUID grainTypeId, BigDecimal netWeightKg) {
-        GrainStock stock = repository.findByBranchIdAndGrainTypeId(branchId, grainTypeId)
-                .orElseThrow(() -> new IllegalStateException(
-                        "No GrainStock row for branch " + branchId + " and grain type " + grainTypeId));
-        stock.increase(netWeightKg);
+        int updated = repository.increaseAvailableQuantity(branchId, grainTypeId, netWeightKg);
+        if (updated == 0) {
+            throw new IllegalStateException(
+                    "No GrainStock row for branch " + branchId + " and grain type " + grainTypeId);
+        }
     }
 }
