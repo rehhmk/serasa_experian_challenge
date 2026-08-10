@@ -126,15 +126,15 @@ describe('truckMachine', () => {
     }
     await vi.advanceTimersByTimeAsync(0)
 
-    // confirmRetryWait -> confirming, 5 vezes (getWeighingBook sempre vazio, do beforeEach)
-    for (let i = 0; i < 5; i++) {
-      await vi.advanceTimersByTimeAsync(400) // CONFIRM_RETRY_DELAY_MS
+    // confirmRetryWait -> confirming, 10 vezes (getWeighingBook sempre vazio, do beforeEach)
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(600) // CONFIRM_RETRY_DELAY_MS
       await vi.advanceTimersByTimeAsync(0)
     }
 
     expect(actor.getSnapshot().value).toBe('unconfirmed')
-    // confirmAttempts vira 5 (MAX_CONFIRM_ATTEMPTS) só depois da 5ª chamada — não há uma 6ª.
-    expect(getWeighingBook).toHaveBeenCalledTimes(5)
+    // confirmAttempts vira 10 (MAX_CONFIRM_ATTEMPTS) só depois da 10ª chamada — não há uma 11ª.
+    expect(getWeighingBook).toHaveBeenCalledTimes(10)
     actor.stop()
   })
 

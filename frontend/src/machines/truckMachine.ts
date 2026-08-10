@@ -19,11 +19,26 @@ import {
 // Cadência real do protocolo (CLAUDE.md §4: ESP32 manda a cada ~100ms).
 const READING_INTERVAL_MS = 100
 const TRAVEL_MS = 1200
-const CONFIRM_RETRY_DELAY_MS = 400
-const MAX_CONFIRM_ATTEMPTS = 5
+// Orçamento de confirmação calibrado pro backend real (Render free tier),
+// não localhost: medido ~300-400ms de round-trip por request contra a
+// instância publicada, contra ~1ms em dev local. O predictor local decide
+// STABLE de forma otimista assim que ENVIA a leitura que fecha a janela
+// (postReading é fire-and-forget, não é aguardado) — a confirmação real só
+// existe depois que essa mesma leitura chega no servidor, o backend também
+// decide STABLE e CompleteWeighingUseCase comita. 5×400ms (~1.6s) bastava
+// contra localhost; contra a internet, sobrava "não confirmado" mesmo em
+// pesagens que iam completar poucos segundos depois.
+const CONFIRM_RETRY_DELAY_MS = 600
+const MAX_CONFIRM_ATTEMPTS = 10
 const UNCONFIRMED_PAUSE_MS = 2000
 const RECORDED_PAUSE_MS = 800
 const LEAVE_MS = 600
+// Margem contra deriva de relógio cliente/servidor no filtro `from` da
+// confirmação (WeighingRepository: `recordedAt >= from`) — scaleId+plate já
+// escopam a busca a esta passagem específica, então alargar a janela não
+// arrisca pegar uma Weighing errada, só protege contra o relógio do
+// navegador estar um pouco à frente do servidor.
+const CONFIRM_FROM_SAFETY_MARGIN_MS = 10_000
 // Tempo esvaziando antes de reabrir uma 2ª transação (duplicateRetry, LOG-008)
 // — emptyDurationMs real do backend + margem pra jitter de rede.
 const EMPTY_MARGIN_MS = STABILIZATION_CONFIG.emptyDurationMs + 300
@@ -284,7 +299,7 @@ export const truckMachine = setup({
         input: ({ context }) => ({
           scaleId: context.scaleId!,
           plate: context.plate,
-          fromMs: context.passStartedAtMs!,
+          fromMs: context.passStartedAtMs! - CONFIRM_FROM_SAFETY_MARGIN_MS,
         }),
         onDone: [
           {
